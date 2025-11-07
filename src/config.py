@@ -15,7 +15,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 # Carpeta donde se guardará el modelo entrenado
 MODEL_DIR = os.path.join(BASE_DIR, "models")
-MODEL_PATH = os.path.join(MODEL_DIR, "models", "detector_model.h5")
+MODEL_PATH = os.path.join(MODEL_DIR, "detector_model.h5")
 
 # Parámetros de entrenamiento
 IMG_SIZE = (224, 224)
@@ -28,4 +28,4 @@ THRESHOLD = 0.7
 
 # Crear carpetas si no existen
 os.makedirs(DATA_DIR, exist_ok=True)
-os.makedirs(MODEL_PATH, exist_ok=True)
+os.makedirs(MODEL_DIR, exist_ok=True)
