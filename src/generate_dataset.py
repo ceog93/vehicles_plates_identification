@@ -1,7 +1,6 @@
 # src/generate_dataset.py
 """
-Genera dataset sintético normativo de placas colombianas.
-Basado en la Resolución 5228 de 2016 (amarillo reflectivo, letras negras, borde negro).
+Genera dataset sintético normativo de placas colombianas (fondo amarillo, letras negras).
 """
 
 import os
@@ -12,35 +11,25 @@ from PIL import Image, ImageDraw, ImageFont
 from .config import DATA_DIR
 
 # === Colores normativos aproximados ===
-COLOR_FONDO = (255, 225, 40)   # Amarillo reflectivo
-COLOR_TEXTO = (0, 0, 0)        # Negro
-COLOR_BORDE = (0, 0, 0)        # Borde negro
+COLOR_FONDO = (255, 211, 0)   # Amarillo reflectivo (RGB)
+COLOR_TEXTO = (0, 0, 0)       # Negro
+COLOR_BORDE = (0, 0, 0)       # Negro
 
-# === Dimensiones estándar (px) ===
-WIDTH, HEIGHT = 335, 170   # proporción real 2:1 aprox
+# === Dimensiones estándar ===
+WIDTH, HEIGHT = 335, 170   # proporción ~2:1
 
-# === Ciudades colombianas (100 aleatorias) ===
+# === Ciudades colombianas (ejemplo) ===
 CIUDADES = [
-    "Bogotá", "Medellín", "Cali", "Barranquilla", "Cartagena", "Bucaramanga", "Pereira", "Manizales", "Cúcuta", "Santa Marta",
-    "Ibagué", "Neiva", "Villavicencio", "Tunja", "Popayán", "Sincelejo", "Montería", "Armenia", "Pasto", "Florencia",
-    "Valledupar", "Riohacha", "Yopal", "Arauca", "Quibdó", "Leticia", "Mocoa", "San José del Guaviare", "Puerto Carreño",
-    "Inírida", "Soacha", "Palmira", "Bello", "Itagüí", "Envigado", "Rionegro", "Girardot", "Zipaquirá", "Sogamoso",
-    "Duitama", "Facatativá", "Fusagasugá", "Tuluá", "Cartago", "Buga", "Cereté", "Lorica", "Malambo", "Soledad",
-    "Jamundí", "La Dorada", "Pitalito", "Yumbo", "Chía", "Cajicá", "Funza", "Mosquera", "Madrid", "Copacabana",
-    "La Estrella", "Dosquebradas", "Villamaría", "Chiquinquirá", "Ocaña", "Apartadó", "Turbo", "Barrancabermeja",
-    "Floridablanca", "Piedecuesta", "Sabanalarga", "Magangué", "Sahagún", "Montelíbano", "El Banco", "Aguachica",
-    "Ciénaga", "Turbaco", "Cereté", "Planeta Rica", "San Andrés", "Providencia", "Melgar", "Espinal", "Garzón",
-    "La Vega", "Guateque", "Pamplona", "Puerto Asís", "Tame", "Guamal", "San Gil", "Barbosa", "Socorro", "Mompox",
-    "Ipiales", "Tumaco", "La Plata", "Chigorodó", "Candelaria", "Florida", "Caicedonia", "Roldanillo"
+    "Bogotá D.C.", "Medellín", "Cali", "Barranquilla", "Cartagena", "Bucaramanga", "Pereira", "Manizales",
+    "Cúcuta", "Santa Marta", "Ibagué", "Neiva", "Villavicencio", "Tunja", "Popayán", "Sincelejo", "Montería",
+    "Armenia", "Pasto", "Valledupar", "Riohacha", "Soledad", "Palmira", "Itagüí", "Rionegro", "Envigado", "Soacha"
 ]
 
-# === Generador de código de placa ===
 def generar_codigo_placa():
     letras = ''.join(random.choices("ABCDEFGHIJKLMNOPQRSTUVWXYZ", k=3))
     numeros = ''.join(random.choices("0123456789", k=3))
     return letras + numeros
 
-# === Función auxiliar para compatibilidad Pillow ===
 def get_text_size(draw, text, font):
     try:
         bbox = draw.textbbox((0, 0), text, font=font)
@@ -48,12 +37,11 @@ def get_text_size(draw, text, font):
     except AttributeError:
         return draw.textsize(text, font=font)
 
-# === Crea placa colombiana simulada ===
 def generar_placa_img(codigo, ciudad):
     img = Image.new("RGB", (WIDTH, HEIGHT), COLOR_FONDO)
     draw = ImageDraw.Draw(img)
 
-    # Marco negro rectangular con esquinas ligeramente redondeadas
+    # Marco con esquinas levemente redondeadas
     radio = 8
     draw.rounded_rectangle(
         [(5, 5), (WIDTH - 5, HEIGHT - 5)],
@@ -62,25 +50,35 @@ def generar_placa_img(codigo, ciudad):
         width=6
     )
 
-    # Tipografías
+    # Cargar fuentes
     try:
-        font = ImageFont.truetype("arialbd.ttf", 90)
-        font_city = ImageFont.truetype("arial.ttf", 30)
+        font = ImageFont.truetype("arialbd.ttf", 95)  # texto grande
+        font_city = ImageFont.truetype("arial.ttf", 28)
     except:
         font = ImageFont.load_default()
         font_city = ImageFont.load_default()
 
-    # Texto principal (código)
+    # Texto principal (placa)
     text_w, text_h = get_text_size(draw, codigo, font)
-    draw.text(((WIDTH - text_w) / 2, (HEIGHT - text_h) / 2 - 20), codigo, font=font, fill=COLOR_TEXTO)
+    draw.text(
+        ((WIDTH - text_w) / 2, (HEIGHT - text_h) / 2 - 15),
+        codigo,
+        font=font,
+        fill=COLOR_TEXTO
+    )
 
     # Ciudad inferior
     city_w, city_h = get_text_size(draw, ciudad, font_city)
-    draw.text(((WIDTH - city_w) / 2, HEIGHT - city_h - 15), ciudad, font=font_city, fill=COLOR_TEXTO)
+    draw.text(
+        ((WIDTH - city_w) / 2, HEIGHT - city_h - 15),
+        ciudad,
+        font=font_city,
+        fill=COLOR_TEXTO
+    )
 
-    return np.array(img)
+    # Convertir de RGB (Pillow) a BGR (OpenCV)
+    return cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
 
-# === Añade fondo aleatorio y ruido ===
 def agregar_fondo_y_ruido(placa_img):
     fondo = np.full((300, 600, 3), np.random.randint(0, 255, size=3), dtype=np.uint8)
     h, w, _ = placa_img.shape
@@ -89,15 +87,14 @@ def agregar_fondo_y_ruido(placa_img):
         escala = min(fondo.shape[1] / w, fondo.shape[0] / h) * 0.9
         placa_img = cv2.resize(placa_img, (int(w * escala), int(h * escala)))
 
-    y = random.randint(50, fondo.shape[0] - placa_img.shape[0] - 10)
-    x = random.randint(50, fondo.shape[1] - placa_img.shape[1] - 10)
+    y = random.randint(30, fondo.shape[0] - placa_img.shape[0] - 10)
+    x = random.randint(30, fondo.shape[1] - placa_img.shape[1] - 10)
 
     fondo[y:y+placa_img.shape[0], x:x+placa_img.shape[1]] = placa_img
 
     ruido = np.random.normal(0, 25, fondo.shape).astype(np.uint8)
     return cv2.addWeighted(fondo, 0.85, ruido, 0.15, 0)
 
-# === Generador de dataset completo ===
 def generar_dataset(num_train=200, num_val=40):
     rutas = {
         "train": {"placa": os.path.join(DATA_DIR, "train", "placa"),
@@ -106,7 +103,6 @@ def generar_dataset(num_train=200, num_val=40):
                 "no_placa": os.path.join(DATA_DIR, "val", "no_placa")}
     }
 
-    # Crear carpetas
     for tipo in rutas:
         for clase in rutas[tipo]:
             os.makedirs(rutas[tipo][clase], exist_ok=True)
@@ -130,4 +126,3 @@ def generar_dataset(num_train=200, num_val=40):
 
     print("✅ Dataset sintético generado exitosamente.")
     print(f"Ubicación: {DATA_DIR}")
-
