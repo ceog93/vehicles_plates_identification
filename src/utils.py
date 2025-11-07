@@ -1,7 +1,7 @@
 # src/utils.py
 
 import tensorflow as tf
-from keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
 def create_data_generators(train_dir, val_dir, img_size, batch_size):
     train_datagen = ImageDataGenerator(

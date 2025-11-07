@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 import random
 from PIL import Image, ImageDraw, ImageFont
-from src.config import DATA_DIR
+from .config import DATA_DIR
 
 def generar_codigo_placa():
     letras = ''.join(random.choices("ABCDEFGHIJKLMNOPQRSTUVWXYZ", k=3))

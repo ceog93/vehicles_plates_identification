@@ -8,7 +8,7 @@ Inerencia sobre video
 import cv2
 import numpy as np
 import tensorflow as tf
-from config import MODEL_PATH, IMG_SIZE, THRESHOLD
+from .config import MODEL_PATH, IMG_SIZE, THRESHOLD
 
 model = tf.keras.models.load_model(MODEL_PATH)
 

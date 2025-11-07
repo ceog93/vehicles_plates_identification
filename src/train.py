@@ -10,8 +10,8 @@ from keras.applications import MobileNetV2
 from keras.layers import Dense, GlobalAveragePooling2D, Dropout
 from keras.models import Model
 from keras.optimizers import Adam
-from config import DATA_DIR, MODEL_PATH, IMG_SIZE, BATCH_SIZE, EPOCHS
-from utils import create_data_generators
+from .config import DATA_DIR, MODEL_PATH, IMG_SIZE, BATCH_SIZE, EPOCHS
+from .utils import create_data_generators
 import os
 
 def train_model():
