@@ -1,0 +1,10 @@
+# Librerías básicas
+numpy
+opencv-python
+pillow
+#matplotlib
+tqdm
+
+# Machine Learning / Deep Learning
+tensorflow
+scikit-learn
