@@ -4,8 +4,8 @@ Punto de entrada principal delmproyecto
 '''
 
 from src.generate_dataset import generar_dataset
-from src.train import train_model
-from src.infer_video import run_video_detection
+#from src.train import train_model
+#from src.infer_video import run_video_detection
 def main():
     print("=== DETECTOR DE PLACAS COLOMBIANAS ===")
     print("1. Generar dataset sintético")
@@ -16,10 +16,14 @@ def main():
     if option == "1":
         generar_dataset()
     elif option == "2":
-        train_model()
+        #train_model()
+        pass
     elif option == "3":
         video_path = input("Ruta del video: ")
-        run_video_detection(video_path)
+        #run_video_detection(video_path)
     else:
         print("Opción inválida.")
+
+if __name__ == "__main__":
+    main()
 
