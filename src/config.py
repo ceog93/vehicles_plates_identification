@@ -17,6 +17,9 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 MODEL_DIR = os.path.join(BASE_DIR, "models")
 MODEL_PATH = os.path.join(MODEL_DIR, "detector_model.h5")
 
+LOGO_DIR = os.path.join(BASE_DIR, "images")
+LOGO_PATH = os.path.join(LOGO_DIR, "logo_placa.png")
+
 # Parámetros de entrenamiento
 IMG_SIZE = (224, 224)
 BATCH_SIZE = 16
