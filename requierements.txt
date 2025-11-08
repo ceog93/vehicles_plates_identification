@@ -8,3 +8,4 @@ tqdm
 # Machine Learning / Deep Learning
 tensorflow
 scikit-learn
+scipy
