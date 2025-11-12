@@ -5,6 +5,7 @@ __pycache__/
 .vscode/
 # C extensions
 *.so
+**/.*/**/
 
 # Distribution / packaging
 .Python
@@ -138,6 +139,11 @@ celerybeat.pid
 .env
 .envrc
 .venv
+.vev*
+.vev*/
+.venv*/**
+venv*/
+venv*/**
 env/
 venv/
 ENV/
