@@ -1,3 +1,6 @@
+# Soporte para Nvidia CUDA
+# pip install nvidia-cudnn-cu12
+
 # Librerías básicas
 numpy
 opencv-python

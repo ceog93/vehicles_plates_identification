@@ -85,7 +85,7 @@ def build_detector():
 # MAIN
 # ============================
 
-if __name__ == "__main__":
+def train_model():
     print("Cargando dataset desde CSV...")
     X, y = load_dataset(IMG_DIR, CSV_PATH)
     print(f"Total de imágenes cargadas: {len(X)}")
