@@ -15,7 +15,8 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 # Carpeta donde se guardará el modelo entrenado
 MODEL_DIR = os.path.join(BASE_DIR, "models")
-MODEL_PATH = os.path.join(MODEL_DIR, "detector_model.h5")
+#MODEL_PATH = os.path.join(MODEL_DIR, "detector_model.h5")
+MODEL_PATH = os.path.join(MODEL_DIR, "detector.h5")
 
 LOGO_DIR = os.path.join(BASE_DIR, "images")
 LOGO_PATH = os.path.join(LOGO_DIR, "logo_placa.png")
