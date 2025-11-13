@@ -14,6 +14,7 @@ def clean_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
 
 def print_header():
+    clean_screen()
     print('\n')
     print("########################################")
     print("        INTELIGENCIA ARTIFICIAL")
@@ -22,11 +23,14 @@ def print_header():
     print("              TENSORFLOW")
     print("          CNN PARA DETECCIÓN")
     print("          PLACAS VEHICULARES")
-    print("########################################\n")
+    print("########################################")
+    print('\n')
     input(' Presione enter para continuar...')
     clean_screen()
 
 def menu():
+    clean_screen()
+    print('\n')
     print("=========================================")
     print("============ MENÚ PRINCIPAL =============")
     print("===== DETECTOR DE PLACAS COLOMBIANAS ====")
