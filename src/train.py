@@ -1,6 +1,6 @@
-# src/train.py
-# Entrenamiento desde cero de un detector de placas vehiculares
-# CNN + regresión de bounding boxes (dataset Roboflow CSV)
+# src/train_corrected.py
+# Entrenamiento de un detector de placas vehiculares con Transfer Learning (MobileNetV2)
+# Regresión de Bounding Boxes (dataset Roboflow CSV)
 
 import os
 import random
@@ -8,7 +8,8 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 from tensorflow.keras import layers, models
-from tensorflow.keras.callbacks import CSVLogger
+from tensorflow.keras.callbacks import CSVLogger, EarlyStopping, ReduceLROnPlateau
+from tensorflow.keras.applications import MobileNetV2 # Importación para Transfer Learning
 from sklearn.model_selection import train_test_split
 import cv2
 import matplotlib.pyplot as plt
@@ -16,95 +17,127 @@ import matplotlib.pyplot as plt
 # ============================
 # CONFIGURACIÓN
 # ============================
-IMG_DIR = "dataset/images"           # Carpeta de imágenes
-CSV_PATH = "dataset/_annotations.csv"  # Archivo CSV de anotaciones
-IMG_SIZE = (224, 224) # Tamaño de entrada de la imagen
-BATCH_SIZE = 16 # Tamaño de batch (Lote de datos a entrenar por ciclo) (ajustar según memoria GPU en GB)
-EPOCHS = 100 # Número de epochs de entrenamiento (ajustar según dataset) (ciclos completo de entrenamiento)
-LR = 1e-4 # Tasa de aprendizaje 1e-4=1×10−4=0.0001
+IMG_DIR = "dataset/images" # Carpeta de imágenes
+CSV_PATH = "dataset/_annotations.csv" # Archivo CSV de anotaciones
+IMG_SIZE = (224, 224) # Tamaño de entrada de la imagen (Estándar para MobileNetV2)
+BATCH_SIZE = 32 # Aumentado para mayor eficiencia (ajustar según memoria GPU)
+EPOCHS = 100 # Número de epochs máximo (Early Stopping lo detendrá antes)
+LR = 1e-4 # Tasa de aprendizaje inicial
+
+# Directorios de salida
+LOGS_DIR = "models/logs"
+PLOTS_DIR = os.path.join(LOGS_DIR, "plots")
+MODEL_PATH = "models/detector.h5"
+
+# Semilla para reproducibilidad
+SEED = 42
+random.seed(SEED)
+np.random.seed(SEED)
+tf.random.set_seed(SEED)
 
 # ============================
-# FUNCIÓN: CARGAR DATASET
+# FUNCIÓN: CARGAR DATASET (Corregida)
 # ============================
 
 def load_dataset(img_dir, csv_path):
     '''
-    Cargar dataset desde CSV y preprocesar imágenes y cajas delimitadoras
+    Cargar dataset desde CSV y preprocesar imágenes y cajas delimitadoras.
     Retorna:
-        X: array numpy de imágenes preprocesadas
-        y: array numpy de cajas delimitadoras normalizadas
+        X: array numpy de imágenes preprocesadas (normalizadas [0,1])
+        y: array numpy de cajas delimitadoras normalizadas (xmin, ymin, xmax, ymax)
+        
+    NOTA: Esta función de carga de datos es simple y ASUME UNA SOLA PLACA POR IMAGEN.
+    Si el dataset tiene múltiples placas, se necesitaría un enfoque diferente (e.g., YOLO).
     '''
-    df = pd.read_csv(csv_path) # dataframe con anotaciones
-    X, y = [], [] # imágenes y cajas
+    df = pd.read_csv(csv_path) 
+    X, y = [], [] 
 
-    # Iterar por cada imagen única y sus anotaciones
+    print("     Iniciando carga de imágenes...")
+    loaded_count = 0
+    
+    # Usamos una lista de nombres únicos para iterar
+    unique_filenames = df['filename'].unique()
 
-    for filename, group in df.groupby("filename"):
-        img_path = os.path.join(img_dir, filename) # ruta completa de la imagen
+    for filename in unique_filenames:
+        img_path = os.path.join(img_dir, filename) 
+        group = df[df['filename'] == filename] # Filtramos las anotaciones para esta imagen
 
-        # Verificar si la imagen existe
         if not os.path.exists(img_path):
             continue
 
-        # Leer y redimensionar imagen
-        img = cv2.imread(img_path) # leer imagen
-
-        # Verificar si la imagen se cargó correctamente
+        img = cv2.imread(img_path) 
+        # Convertir de BGR a RGB para Keras/Matplotlib
         if img is None:
             continue
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-        # Obtener dimensiones originales de la imagen
-        h, w = img.shape[:2] # dimensiones originales
+        h, w = img.shape[:2] # Dimensiones originales
 
-        # Preprocesamiento de la imagen
-        img_resized = cv2.resize(img, IMG_SIZE) # redimensionar imagen 
-        img_resized = img_resized.astype(np.float32) / 255.0 # normalizar [0,1]
+        # Preprocesamiento de la imagen (Redimensionar y normalizar [0,1])
+        img_resized = cv2.resize(img, IMG_SIZE)
+        img_resized = img_resized.astype(np.float32) / 255.0 
 
-        # Tomamos la primera caja (una por imagen, simplificación)
-        row = group.iloc[0] # primera anotación
-        xmin, ymin, xmax, ymax = row["xmin"], row["ymin"], row["xmax"], row["ymax"] # coordenadas absolutas de la caja
+        # Tomamos la primera caja (asumiendo una sola placa, como el código original)
+        row = group.iloc[0] 
+        xmin, ymin, xmax, ymax = row["xmin"], row["ymin"], row["xmax"], row["ymax"]
 
-        # Normalizar datos de la caja
-        # preprocesamiento de datos con Normalización Mín-Máx
+        # Normalizar a coordenadas xmin, ymin, xmax, ymax en rango [0, 1]
+        # Se prefiere esta representación para la salida de la CNN sobre (centro, w, h)
+        xmin_norm = xmin / w
+        ymin_norm = ymin / h
+        xmax_norm = xmax / w
+        ymax_norm = ymax / h
 
-        x_center = ((xmin + xmax) / 2) / w # centro de la caja en el eje x normalizado
-        y_center = ((ymin + ymax) / 2) / h # centro de la caja en el eje y normalizado
-        box_width = (xmax - xmin) / w # ancho de la caja en el eje x normalizado
-        box_height = (ymax - ymin) / h # alto de la caja en el eje y normalizado
-
-        X.append(img_resized) # agregar imagen preprocesada
-        y.append([x_center, y_center, box_width, box_height]) # agregar caja normalizada
-
-    return np.array(X), np.array(y) # convertir a arrays numpy y retornar 
+        X.append(img_resized) 
+        y.append([xmin_norm, ymin_norm, xmax_norm, ymax_norm]) # xmin, ymin, xmax, ymax normalizados
+        loaded_count += 1
+        
+    print(f"Carga finalizada. {loaded_count} imágenes procesadas.")
+    return np.array(X), np.array(y)
 
 # ============================
-# FUNCIÓN: CONSTRUIR MODELO
+# FUNCIÓN: CONSTRUIR MODELO (Mejorada con Transfer Learning)
 # ============================
 
 def build_detector():
     '''
-    Construir modelo CNN para regresión de bounding boxes
-    Retorna:
-        model: modelo compilado de Keras
+    Construir modelo usando MobileNetV2 pre-entrenado (Transfer Learning) 
+    para la regresión de bounding boxes.
     '''
-    inputs = layers.Input(shape=(IMG_SIZE[0], IMG_SIZE[1], 3)) # entrada de imagen 
-    x = layers.Conv2D(32, (3,3), activation='relu', padding='same')(inputs) # primera capa convolucional
-    x = layers.MaxPooling2D(2)(x) # primera capa de pooling
-    x = layers.Conv2D(64, (3,3), activation='relu', padding='same')(x) # segunda capa convolucional
-    x = layers.MaxPooling2D(2)(x) # segunda capa de pooling
-    x = layers.Conv2D(128, (3,3), activation='relu', padding='same')(x) # tercera capa convolucional
-    x = layers.MaxPooling2D(2)(x) # tercera capa de pooling
-    x = layers.Conv2D(256, (3,3), activation='relu', padding='same')(x) # cuarta capa convolucional
-    x = layers.GlobalAveragePooling2D()(x) # capa de pooling global
-    x = layers.Dense(256, activation='relu')(x) # capa densa
-    x = layers.Dropout(0.3)(x) # capa de dropout para regularización
-    outputs = layers.Dense(4, activation='sigmoid')(x)  # x, y, w, h normalizados
-    model = models.Model(inputs, outputs) # construir modelo
-    model.compile(optimizer=tf.keras.optimizers.Adam(LR), loss='mse', metrics=['mae']) # compilar modelo con Adam y MSE
-    return model # retornar modelo compilado
+    # 1. Cargar el modelo base pre-entrenado
+    base_model = MobileNetV2(
+        weights='imagenet', # Usar pesos de ImageNet
+        include_top=False,  # Excluir la capa de clasificación final
+        input_shape=(IMG_SIZE[0], IMG_SIZE[1], 3)
+    )
+
+    # Congelar las capas del modelo base (no se entrenarán)
+    base_model.trainable = False
+
+    # 2. Construir el modelo completo
+    inputs = layers.Input(shape=(IMG_SIZE[0], IMG_SIZE[1], 3))
+    x = base_model(inputs, training=False) # Usar el modelo base en modo inferencia
+
+    # Agregar capas de regresión personalizadas
+    x = layers.GlobalAveragePooling2D()(x) # Reduce la dimensionalidad espacial
+    x = layers.Dense(128, activation='relu')(x)
+    x = layers.Dropout(0.3)(x) 
+    
+    # Salida de 4 coordenadas (xmin, ymin, xmax, ymax) normalizadas [0, 1]
+    outputs = layers.Dense(4, activation='sigmoid', name='bounding_box_output')(x) 
+    
+    model = models.Model(inputs, outputs) 
+    
+    # Usamos Huber Loss (Smooth L1) que es más robusta para regresión de cajas que MSE puro
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(LR), 
+        loss=tf.keras.losses.Huber(), # Mejora sobre 'mse'
+        metrics=['mae', 'mse']
+    ) 
+    return model
 
 # ============================
-# FUNCIÓN: GRAFICAR HISTORIAL DE ENTRENAMIENTO
+# FUNCIÓN: GRAFICAR HISTORIAL DE ENTRENAMIENTO (Corregida)
 # ============================
 
 def plot_training_history(history):
@@ -112,19 +145,20 @@ def plot_training_history(history):
     Graficar métricas de entrenamiento y validación
     history: objeto History retornado por model.fit()
     '''
-    # Graficar pérdida
-    # La métrica de pérdida utilizada es el Error Cuadrático Medio (MSE).
-    plt.figure(figsize=(8,5))
-    plt.plot(history.history['loss'], label='Entrenamiento')
-    plt.plot(history.history['val_loss'], label='Validación')
-    plt.title("Pérdida del detector")
+    os.makedirs(PLOTS_DIR, exist_ok=True) # Crear carpeta 'plots'
+
+    # Graficar pérdida (Huber Loss)
+    plt.figure(figsize=(10, 6))
+    plt.plot(history.history['loss'], label='Pérdida Entrenamiento')
+    plt.plot(history.history['val_loss'], label='Pérdida Validación')
+    plt.title("Pérdida del detector (Huber Loss)")
     plt.xlabel("Epoch")
-    plt.ylabel("MSE")
+    plt.ylabel("Huber Loss")
     plt.legend()
     plt.grid(True)
-    plt.savefig("models/logs/plots/training_loss.png") # guardar figura
+    plt.savefig(os.path.join(PLOTS_DIR, "training_loss.png")) # Ruta corregida
     plt.show()
-
+    
 # ============================
 # FUNCIÓN: ENTRENAR MODELO
 # ============================
@@ -132,62 +166,67 @@ def plot_training_history(history):
 def train_model():
     '''
     Función principal para entrenar el modelo de detección de placas vehiculares
-    IMG_DIR: carpeta de imágenes
-    CSV_PATH: archivo CSV de anotaciones
-    X: array numpy de imágenes preprocesadas
-    y: array numpy de cajas delimitadoras normalizadas
-    test_size: proporción del dataset para validación
-    EPOCHS: número de epochs de entrenamiento
-    BATCH_SIZE: tamaño de batch para entrenamiento
-
     '''
     print("=========================================")
-    print("      ENTRENAMIENTO DEL MODELO")
+    print("         ENTRENAMIENTO DEL MODELO")
     print("=========================================")
-    print(f"        1/6 Iniciando entrenamiento del modelo de detección de placas vehiculares...")
-    print(f"        2/6 Cargando dataset desde CSV...")
+    
+    # 1. Configuración de directorios de salida
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    os.makedirs(PLOTS_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True) # Asegurar models/ existe
+
+    print(f"         1/6 Iniciando entrenamiento del modelo de detección de placas vehiculares...")
+    print(f"         2/6 Cargando dataset desde CSV...")
 
     X, y = load_dataset(IMG_DIR, CSV_PATH)
 
-    print(f"            2.1 Total de imágenes cargadas: {len(X)}")
-    print(f"        3/6 Dividiendo dataset en entrenamiento (75%) y validación (25%)...")
+    print(f"             2.1 Dimensiones de X: {X.shape}")
+    print(f"         3/6 Dividiendo dataset en entrenamiento (75%) y validación (25%)...")
 
-    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.25, random_state=42)
+    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.25, random_state=SEED) # Dividir dataset 25/75
 
-    print(f"            3.1 Datos de Entrenamiento: {len(X_train)}")
-    print(f"            3.2 Datos de Validación: {len(X_val)}")
+    print(f"             3.1 Datos de Entrenamiento: {len(X_train)}")
+    print(f"             3.2 Datos de Validación: {len(X_val)}")
 
-    print(f"        4/6 Compilando modelo CNN para regresión de bounding boxes...\n")
+    print(f"         4/6 Compilando modelo con MobileNetV2 (Transfer Learning)...\n")
 
     model = build_detector()
+    # model.summary() # Descomentar para ver la arquitectura
 
-    print(f"        5/6 Iniciando proceso de entrenamiento...\n")
+    print(f"         5/6 Iniciando proceso de entrenamiento con Callbacks...\n")
 
-    # Crea el callback para registrar métricas del entrenamiento en CSV
-    os.makedirs("models", exist_ok=True) # crear carpeta si no existe
-    os.makedirs("models/logs", exist_ok=True) # crear carpeta si no existe
-    csv_logger = CSVLogger('logs/training_log.csv', append=True) # registrar métricas en CSV
+    CSV_LOG_PATH = os.path.join(LOGS_DIR, "training_log.csv")
+    
+    # Callbacks para un entrenamiento robusto
+    callbacks = [
+        # Guarda el historial de métricas
+        CSVLogger(CSV_LOG_PATH, append=True),
+        # Detiene el entrenamiento si la pérdida de validación no mejora tras 10 epochs
+        EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True, verbose=1),
+        # Reduce la tasa de aprendizaje si la pérdida de validación no mejora tras 5 epochs
+        ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, min_lr=1e-6, verbose=1)
+    ]
 
     history = model.fit(
         X_train, y_train,
         validation_data=(X_val, y_val),
-        epochs=EPOCHS,
+        epochs=EPOCHS, # El número real de epochs será manejado por EarlyStopping
         batch_size=BATCH_SIZE,
         verbose=1,
-        callbacks=[csv_logger]
+        callbacks=callbacks
     )
 
     print(f"\n          5.1 ✅ Entrenamiento completado.")
 
-    # Guardar modelo
-    model.save("models/detector.h5")
-    print(f"\n        6/6 ✅ Modelo guardado en models/detector.h5")
+    # Guardar el modelo (el que tiene los mejores pesos según EarlyStopping)
+    model.save(MODEL_PATH)
+    print(f"\n        6/6 ✅ Modelo guardado en {MODEL_PATH}")
 
     # Graficar historial de entrenamiento
-    print(f"\n        Graficando historial de entrenamiento...")
+    print(f"\n        Graficando historial de entrenamiento en {os.path.join(PLOTS_DIR, 'training_loss.png')}...")
     plot_training_history(history)
 
-    input(" Presione enter para continuar...")
+    input("\nPresione enter para continuar...")
 
     return history, model
-
