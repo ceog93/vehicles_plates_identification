@@ -1,11 +1,18 @@
+# src/utils/view_web_dataset.py
+'''
+Visor web para el dataset utilizando FiftyOne
+'''
 import fiftyone as fo
 import pandas as pd
 import os
 
-def view_web_dataset():
+from src.config import RAW_DATASET_DIR as IMG_DIR
+from src.config import RAW_DATA_LABELS_CSV as CSV_PATH
+
+def view_web_dataset(img_dir = IMG_DIR, csv_path = CSV_PATH):
     # --- Paths ---
-    img_dir = "dataset/images"
-    csv_path = "dataset/_annotations.csv"
+    #img_dir = IMG_DIR
+    #csv_path = CSV_PATH
 
     # --- Cargar CSV ---
     print("\n")

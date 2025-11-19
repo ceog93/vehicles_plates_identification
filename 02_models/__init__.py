@@ -1,4 +1,4 @@
-# models/__init__.py
+# 02_models/__init__.py
 '''
 inicializa el paquete models
 '''

@@ -56,7 +56,6 @@ def main():
         main()
         pass
     elif option == "3":
-        #video_path = input("Ruta del video: ")
         video_path = "data/videos/video_prueba.mp4"
         run_video_detection(video_path)
         main()
