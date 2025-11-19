@@ -7,6 +7,7 @@ opencv-python
 pillow
 #matplotlib
 tqdm
+fiftyone
 
 # Machine Learning / Deep Learning
 tensorflow

@@ -3,8 +3,7 @@
 Punto de entrada principal delmproyecto
 '''
 
-from src.generate_dataset import generar_dataset
-from src.view_web_dataset import view_web_dataset
+from src.utils.view_web_dataset import view_web_dataset
 from src.train import train_model
 from src.infer_video import run_video_detection
 import os
@@ -36,7 +35,7 @@ def menu():
     print("===== DETECTOR DE PLACAS COLOMBIANAS ====")
     print("=========================================\n")
     
-    print("     1. Ver dataset en visor web")
+    print("     1. Ver dataset crudo con bounding boxes en visor web")
     print("     2. Entrenar modelo")
     print("     3. Inferir en video")
     print("     4. Finalizar programa\n")

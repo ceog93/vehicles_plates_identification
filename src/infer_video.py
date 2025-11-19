@@ -4,20 +4,14 @@ import cv2
 import numpy as np
 import tensorflow as tf
 import os
+from src.config import LATEST_MODEL_PATH as MODEL_PATH, IMG_SIZE
 
 # ============================
 # CONFIGURACIÓN (Debe coincidir con train.py)
 # ============================
-MODEL_PATH = "models/detector.h5"
-IMG_SIZE = (224, 224)
 # Puedes ajustar el color y grosor del recuadro
 BOX_COLOR = (0, 255, 0)  # Verde BGR
 BOX_THICKNESS = 2
-
-# ============================
-# CARGA DEL MODELO (MODIFICADA)
-# ============================
-MODEL_PATH = "models/detector.h5"
 
 try:
     # Definimos las métricas que el modelo espera, aunque no las usemos para inferencia.
@@ -39,7 +33,7 @@ except Exception as e:
     # Si sigue fallando, la arquitectura del modelo podría ser la causa
     print(f"❌ Error al cargar el modelo: {e}")
     print("Asegúrate de que la versión de TensorFlow en tu venv sea la misma que la de entrenamiento.")
-    exit()
+    pass
 
 # ============================
 # PREPROCESAMIENTO

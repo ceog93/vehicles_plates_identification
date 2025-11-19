@@ -9,9 +9,10 @@ from sklearn.model_selection import train_test_split
 # ============================
 # CONFIGURACIÓN (Importadas de src.config)
 # ============================
-from src.config import RAW_DATASET_DIR, TRAIN_DATA_DIR, VALIDATION_DATA_DIR
+from src.config import RAW_DATASET_DIR, PROCESED_DATA_DIR, TRAIN_DATA_DIR, VALIDATION_DATA_DIR
 from src.config import RAW_DATA_LABELS_CSV, PROCESSED_DATA_LABELS_CSV
 from src.config import IMG_SIZE
+from src.utils.view_web_dataset import view_web_dataset
 
 # Semilla para reproducibilidad
 SEED = 42
@@ -40,7 +41,7 @@ def preprocess_and_save_data_modular(
     brightness_factor=(0.4, 1.6),           # Ajuste de brillo
     blur_kernel_size_range=(1, 5),          # Kernel de Desenfoque Gaussiano (números impares)
     gaussian_noise_std_range=(0.0, 0.1),    # <-- Desviación estándar del ruido gaussiano
-    num_augmentations=3                     # CANTIDAD DE COPIAS AUMENTADAS POR IMAGEN ORIGINAL
+    num_augmentations=10                     # CANTIDAD DE COPIAS AUMENTADAS POR IMAGEN ORIGINAL
 ):
     '''
     Carga el dataset RAW (sin procesar), aplica Data Augmentation (aumento de datos), divide y guarda
@@ -215,6 +216,14 @@ def preprocess_and_save_data_modular(
     # 5. Guardar el nuevo archivo CSV unificado
     df_processed = pd.DataFrame(final_csv_data)
     df_processed.to_csv(processed_csv_path, index=False)
+    
+    # ========================================================
+    # ✅ EJECUCIÓN DEL VISOR WEB (Train + Validation Unificado)
+    # ========================================================
+    print("\n           Lanzando Visor Web FiftyOne para el Dataset Procesado (Train + Validation) ---")
+    view_web_dataset(img_dir=PROCESED_DATA_DIR, csv_path=processed_csv_path)
+    
+    print("-----------------------------------------------------------------------------")
     
     print(f"         ✅ Datos procesados y guardados en:\n         - Entrenamiento: {train_dir}\n         - Validación: {val_dir}\n         - CSV: {processed_csv_path}")
     print("=========================================")
