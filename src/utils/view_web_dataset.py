@@ -5,10 +5,10 @@ import fiftyone as fo
 import pandas as pd
 import os
 from tqdm import tqdm
-from src.config import RAW_DATASET_DIR as IMG_DIR
-from src.config import RAW_DATA_LABELS_CSV as CSV_PATH
+from src.config import PROCESED_DATA_DIR
+from src.config import PROCESSED_DATA_LABELS_CSV
 
-def view_web_dataset(img_dir=IMG_DIR, csv_path=CSV_PATH):
+def view_web_dataset(img_dir=PROCESED_DATA_DIR, csv_path=PROCESSED_DATA_LABELS_CSV):
     '''
     Visor web para el dataset utilizando FiftyOne.
     Lanza el visor utilizando las rutas de imagen y CSV especificadas, 

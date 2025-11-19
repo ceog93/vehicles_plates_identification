@@ -5,6 +5,7 @@
 import os
 import numpy as np
 import tensorflow as tf
+import pandas as pd
 from tensorflow.keras import layers, models
 from tensorflow.keras.callbacks import CSVLogger, EarlyStopping, ReduceLROnPlateau
 from tensorflow.keras.applications import MobileNetV2 
@@ -62,16 +63,16 @@ def load_processed_split(data_dir, df_split):
 # FUNCIÓN: CONSTRUIR MODELO (Sin cambios)
 # ============================
 
-def build_detector():
+def build_detector(img_size=IMG_SIZE,learning_rate=LEARNING_RATE):
     ''' Construir modelo usando MobileNetV2 pre-entrenado '''
     base_model = MobileNetV2(
         weights='imagenet', 
         include_top=False, 
-        input_shape=(IMG_SIZE[0], IMG_SIZE[1], 3)
+        input_shape=(img_size[0], img_size[1], 3)
     )
     base_model.trainable = False
 
-    inputs = layers.Input(shape=(IMG_SIZE[0], IMG_SIZE[1], 3))
+    inputs = layers.Input(shape=(img_size[0], img_size[1], 3))
     x = base_model(inputs, training=False) 
     x = layers.GlobalAveragePooling2D()(x) 
     x = layers.Dense(128, activation='relu')(x)
@@ -109,7 +110,7 @@ def plot_training_history(history):
 # FUNCIÓN: ENTRENAR MODELO (Actualizada para usar las variables)
 # ============================
 
-def train_model():
+def train_model(epochs=EPOCHS, batch_size=BATCH_SIZE, img_size=IMG_SIZE,learning_rate=LEARNING_RATE):
     ''' Función principal para entrenar el modelo de detección de placas vehiculares '''
     print("=========================================")
     print("             ENTRENAMIENTO DEL MODELO")
@@ -120,30 +121,30 @@ def train_model():
     os.makedirs(PLOTS_DIR, exist_ok=True)
     os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True) 
 
-    print(f"             1/7 Iniciando proceso de preprocesamiento, augmentation modular y guardado...")
+    #print(f"             1/7 Iniciando proceso de preprocesamiento, augmentation modular y guardado...")
     
     # ******************************************************************
     # AUMENTAR DATOS Y PREPROCESAR (Modular)
     # ******************************************************************
-    df_processed = preprocess_and_save_data_modular() # Puede recibir parámetros si es necesario
-
-    print(f"             2/7 Cargando dataset de Entrenamiento desde archivos PROCESADOS...")
+    #df_processed = preprocess_and_save_data_modular() # Puede recibir parámetros si es necesario
+    df_processed = pd.read_csv(PROCESSED_DATA_LABELS_CSV) # Cargar directamente el CSV procesado existente
+    print(f"             1/6 Cargando dataset de Entrenamiento desde archivos PROCESADOS...")
     df_train = df_processed[df_processed['split'] == 'train']
     # Carga desde el directorio TRAIN_DATA_DIR
     X_train, y_train = load_processed_split(TRAIN_DATA_DIR, df_train)
 
-    print(f"             3/7 Cargando dataset de Validación desde archivos PROCESADOS...")
+    print(f"             2/6 Cargando dataset de Validación desde archivos PROCESADOS...")
     df_val = df_processed[df_processed['split'] == 'valid']
     # Carga desde el directorio VALIDATION_DATA_DIR
     X_val, y_val = load_processed_split(VALIDATION_DATA_DIR, df_val)
     
-    print(f"             3.1 Datos de Entrenamiento: {len(X_train)}")
-    print(f"             3.2 Datos de Validación: {len(X_val)}")
+    print(f"                2.1 Datos de Entrenamiento: {len(X_train)}")
+    print(f"                2.2 Datos de Validación: {len(X_val)}")
 
-    print(f"             4/7 Compilando modelo con MobileNetV2 (Transfer Learning)...\n")
-    model = build_detector()
+    print(f"             3/6 Compilando modelo con MobileNetV2 (Transfer Learning)...\n")
+    model = build_detector(img_size=IMG_SIZE, learning_rate=LEARNING_RATE)
     
-    print(f"             5/7 Iniciando proceso de entrenamiento con Callbacks...\n")
+    print(f"             4/6 Iniciando proceso de entrenamiento con Callbacks...\n")
     
     callbacks = [
         CSVLogger(TRAINING_LOG_CSV, append=True), # Log de entrenamiento en CSV
@@ -160,15 +161,15 @@ def train_model():
         callbacks=callbacks # Llamados para control del entrenamiento 
     )
 
-    print(f"\n             5.1 ✅ Entrenamiento completado.")
+    print(f"\n               4.1 ✅ Entrenamiento completado.")
 
     model.save(MODEL_PATH)
-    print(f"\n             6/7 ✅ Modelo guardado en {MODEL_PATH}")
+    print(f"\n             5/6 ✅ Modelo guardado en {MODEL_PATH}")
 
     print(f"\n             Graficando historial de entrenamiento en {os.path.join(PLOTS_DIR, 'training_loss.png')}...")
     plot_training_history(history)
     
-    print("         7/7 Proceso de entrenamiento finalizado.")
+    print(f"               6/6 Proceso de entrenamiento finalizado.")
 
     input("\nPresione enter para continuar...")
 

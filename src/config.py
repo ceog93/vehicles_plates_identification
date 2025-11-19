@@ -80,7 +80,7 @@ LOGO_PATH = os.path.join(LOGO_DIR, "logo_placa.png")
 # ============================= ENTRENAMIENTO =============================
 # Parámetros de entrenamiento
 IMG_SIZE = (640, 640) # Tamaño de las imágenes de entrada para el modelo
-BATCH_SIZE = 32 # Tamaño del lote para el entrenamiento (segun capacidad de memoria de la GPU o CPU)
+BATCH_SIZE = 16 # Tamaño del lote para el entrenamiento (segun capacidad de memoria de la GPU o CPU)
 EPOCHS = 100 # Número de épocas (iteraciones completas sobre el conjunto de datos) para el entrenamiento
 LEARNING_RATE = 1e-4 # 0.001 # Tasa de aprendizaje para el optimizador
 THRESHOLD = 0.7 # Umbral de predicción
