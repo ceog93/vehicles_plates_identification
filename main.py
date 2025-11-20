@@ -35,7 +35,7 @@ def menu():
     print("===== DETECTOR DE PLACAS COLOMBIANAS ====")
     print("=========================================\n")
     
-    print("     1. Preprocesar y aumentar dataset (Reemplaza dataset procesados actual)")
+    print("     1. (¡PRECAUCIÓN!) Preprocesar y aumentar dataset (Reemplaza dataset actual)")
     print("     2. Ver dataset procesado en visor web")
     print("     3. Entrenar modelo")
     print("     4. Inferir en video")

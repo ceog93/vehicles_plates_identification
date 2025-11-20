@@ -42,7 +42,7 @@ model_name = (f"model_{current_time}")
 # Carpeta específica para el modelo actual: 02_models/<FECHA_ACTUAL>|
 CURRENT_MODEL_DIR = os.path.join(ROOT_MODEL_DIR, model_name)
 # Ruta completa para guardar el modelo: 02_models/<FECHA_ACTUAL>/detector
-MODEL_PATH = os.path.join(CURRENT_MODEL_DIR, "detector_model")
+MODEL_PATH = os.path.join(CURRENT_MODEL_DIR, "detector_model.keras")
 #os.makedirs(CURRENT_MODEL_DIR, exist_ok=True) # Asegura que la carpeta del modelo actual exista
 LOGS_DIR = os.path.join(CURRENT_MODEL_DIR, "logs")
 os.makedirs(LOGS_DIR, exist_ok=True) # Asegura que la carpeta de logs exista
