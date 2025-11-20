@@ -67,7 +67,7 @@ def load_processed_split(data_dir, df_split):
 # ============================
 
 def build_detector(img_size=IMG_SIZE,learning_rate=LEARNING_RATE):
-    ''' Construir modelo usando MobileNetV2 pre-entrenado '''
+    ''' Construir modelo usando MobileNetV2 '''
     base_model = MobileNetV2(
         weights='imagenet', 
         include_top=False, 
