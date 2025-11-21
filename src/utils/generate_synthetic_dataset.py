@@ -13,7 +13,7 @@ import cv2
 import random
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-from .config import DATA_DIR, IMG_SIZE, LOGO_PATH
+from src.config import DATA_DIR, IMG_SIZE, LOGO_PATH
 
 # Parámetros visuales
 COLOR_FONDO = (255, 211, 0)   # amarillo reflectivo aproximado (RGB)

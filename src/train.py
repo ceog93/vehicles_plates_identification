@@ -6,9 +6,9 @@ import os
 import numpy as np
 import tensorflow as tf
 import pandas as pd
-from tensorflow.keras import layers, models
-from tensorflow.keras.callbacks import CSVLogger, EarlyStopping, ReduceLROnPlateau, ModelCheckpoint
-from tensorflow.keras.applications import MobileNetV2 
+from tensorflow.keras import layers, models # type: ignore
+from tensorflow.keras.callbacks import CSVLogger, EarlyStopping, ReduceLROnPlateau, ModelCheckpoint # type: ignore
+from tensorflow.keras.applications import MobileNetV2  # type: ignore
 import cv2
 import matplotlib.pyplot as plt
 from src.utils.preprocess_and_augmentation import preprocess_and_save_data_modular
