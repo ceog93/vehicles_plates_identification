@@ -45,10 +45,11 @@ def build_efficient_detector(img_size=IMG_SIZE, learning_rate=LEARNING_RATE):
     x = layers.Dropout(0.3)(x)
 
     # Regresión bounding box (xmin, ymin, xmax, ymax)
+    # MODIFICADO: Ahora predice 5 valores: [xmin, ymin, xmax, ymax, confidence]
     outputs = layers.Dense(
-        4,
+        5,
         activation="sigmoid",
-        name="bounding_box_output"
+        name="detector_output"
     )(x)
 
     model = models.Model(inputs, outputs)

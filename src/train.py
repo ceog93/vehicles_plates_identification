@@ -8,9 +8,11 @@ import pandas as pd
 from tensorflow.keras.callbacks import CSVLogger, EarlyStopping, ReduceLROnPlateau, ModelCheckpoint # type: ignore
 import cv2
 import matplotlib.pyplot as plt
-from src.models.efficient_detector import build_efficient_detector as build_detector # Usa EfficientNetB0 como modelo base
-from src.models.mobile_net_detector import build_mobile_net_detector as build_detector_mobilenet # Alternativa: Usa MobileNetV2 como modelo base
+#from src.models.efficient_detector import build_efficient_detector as build_detector # Usa EfficientNetB0 como modelo base
+#from src.models.mobile_net_detector import build_mobile_net_detector as build_detector_mobilenet # Alternativa: Usa MobileNetV2 como modelo base
 # from src.utils.preprocess_and_augmentation import preprocess_and_save_data_modular # Se comenta ya que se usa dataset pre-procesado
+from src.models.efficient_detector_multi_placa import build_multishot_detector_from_scratch as build_detector 
+
 
 
 # ============================

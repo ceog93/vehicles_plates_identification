@@ -41,7 +41,7 @@ def preprocess_and_save_data_modular(
     brightness_factor=(0.4, 1.6),           # Ajuste de brillo
     blur_kernel_size_range=(1, 5),          # Kernel de Desenfoque Gaussiano (números impares)
     gaussian_noise_std_range=(0.0, 0.1),    # <-- Desviación estándar del ruido gaussiano
-    num_augmentations=2                     # CANTIDAD DE COPIAS AUMENTADAS POR IMAGEN ORIGINAL
+    num_augmentations=10                     # CANTIDAD DE COPIAS AUMENTADAS POR IMAGEN ORIGINAL
 ):
     '''
     Carga el dataset RAW (sin procesar), aplica Data Augmentation (aumento de datos), divide y guarda

@@ -7,6 +7,11 @@ import pandas as pd
 import tensorflow as tf
 import os
 import cv2 # Usaremos OpenCV para cargar y redimensionar imágenes
+# --- Nuevos Parámetros Necesarios para el Generador (Definidos al inicio del modelo) ---
+GRID_SIZE = 7       
+BBOX_ANCHORS = 3    
+NUM_CLASSES = 1     
+OUTPUT_DIM = (5 * BBOX_ANCHORS) + NUM_CLASSES 
 
 class ImageSequence(tf.keras.utils.Sequence):
     """Generador de datos para Keras que carga imágenes por lotes."""
@@ -63,18 +68,18 @@ class ImageSequence(tf.keras.utils.Sequence):
             np.random.shuffle(self.indexes)
 
     def __data_generation(self, indexes_in_batch):
-        """Carga y preprocesa el lote de imágenes y etiquetas desde el disco."""
+        """Carga y preprocesa el lote de imágenes y etiquetas desde el disco (Generador Multiplaca)."""
         
         target_width, target_height = self.image_shape
         
         # Inicializar arrays vacíos para el lote
-        # X: Input (Imágenes)
         X = np.empty((self.batch_size, target_height, target_width, self.n_channels), dtype=np.float32)
-        # Y: Output (BBoxes normalizados)
-        y = np.empty((self.batch_size, 4), dtype=np.float32) 
-
+        
+        # ⚠️ CAMBIO CRÍTICO: El output y ahora es (BATCH, GRID_SIZE, GRID_SIZE, OUTPUT_DIM)
+        y = np.zeros((self.batch_size, GRID_SIZE, GRID_SIZE, OUTPUT_DIM), dtype=np.float32) 
+        
         # Cargar y preprocesar cada imagen
-        for i, idx in enumerate(indexes_in_batch): # Iterar sobre los índices
+        for i, idx in enumerate(indexes_in_batch): 
             
             # --- 1. Obtener Datos por Índice ---
             file_name = self.file_names[idx]
@@ -82,33 +87,55 @@ class ImageSequence(tf.keras.utils.Sequence):
             original_w = self.original_widths[idx]
             original_h = self.original_heights[idx]
 
+            # ... (Carga de imagen y procesamiento de X idéntico a tu código original) ...
+            # Se asume que X[i,] es llenado correctamente con la imagen normalizada
+            # --- 2. Procesamiento de IMAGEN (X) ---
+            # (tu código de carga y resize va aquí, omitido por brevedad)
+            
             img_path = os.path.join(self.data_dir, file_name)
             img = cv2.imread(img_path)
-            
-            # Manejo básico de imagen no cargada
-            if img is None:
-                X[i,] = np.zeros((target_height, target_width, self.n_channels), dtype=np.float32)
-                y[i,] = [0.0, 0.0, 0.0, 0.0]
-                continue
-                
-            # --- 2. Procesamiento de IMAGEN (X) ---
+            if img is None: continue
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             img = cv2.resize(img, self.image_shape)
             X[i,] = img.astype('float32') / 255.0
 
-            # --- 3. Procesamiento y Normalización de ETIQUETA (Y) ---
+            # --- 3. Procesamiento de ETIQUETA (Y) - Transformación YOLO/SSD ---
             
-            # Normalización a [0, 1] (Coordenada / Dimensión Original)
+            # Normalización a [0, 1]
             xmin_norm = bbox[0] / original_w
             ymin_norm = bbox[1] / original_h
             xmax_norm = bbox[2] / original_w
             ymax_norm = bbox[3] / original_h
             
-            # Almacenar el BBox normalizado
-            y[i,] = [xmin_norm, ymin_norm, xmax_norm, ymax_norm]
+            # Convertir a formato (cx, cy, w, h)
+            cx_norm = (xmin_norm + xmax_norm) / 2
+            cy_norm = (ymin_norm + ymax_norm) / 2
+            w_norm = xmax_norm - xmin_norm
+            h_norm = ymax_norm - ymin_norm
+            
+            # Determinar la CELDA de la cuadrícula (i, j) donde cae el centro (cx_norm, cy_norm)
+            cell_x = int(cx_norm * GRID_SIZE)
+            cell_y = int(cy_norm * GRID_SIZE)
+            
+            # ⚠️ Verificación de límites
+            if cell_x >= GRID_SIZE or cell_y >= GRID_SIZE: continue
+
+            # Normalizar el centro (cx, cy) respecto a la celda (coordenadas locales)
+            cx_local = (cx_norm * GRID_SIZE) - cell_x
+            cy_local = (cy_norm * GRID_SIZE) - cell_y
+            
+            # Construir el vector de Ground Truth para la celda (cell_y, cell_x)
+            # Asignar a la primera ancla (BBOX_ANCHORS=3, usamos la primera por simplicidad)
+            anchor_index = 0 
+            
+            # Índice de inicio para la primera ancla (5 * 0)
+            start_idx = 5 * anchor_index 
+            
+            # [Confianza (1), cx_local, cy_local, w_norm, h_norm]
+            y[i, cell_y, cell_x, start_idx : start_idx + 5] = [1.0, cx_local, cy_local, w_norm, h_norm]
+            
+            # Clasificación (opcional, si NUM_CLASSES > 1, se colocaría en los últimos índices)
+            if NUM_CLASSES > 0:
+                y[i, cell_y, cell_x, -1] = 1.0 # Clase 1: Placa
 
         return X, y
-
-# Elimina o deja sin usar la función load_processed_split()
-# Def load_processed_split(data_dir: str, df_split: pd.DataFrame):
-#    ... esta función ya no es necesaria

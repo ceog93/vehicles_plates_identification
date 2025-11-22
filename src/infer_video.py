@@ -1,136 +1,178 @@
 # src/infer_video.py
 
+"""
+Inferencia sobre un video para detección Multiplaca:
+- Lee frames, aplica letterbox (resize_pad)
+- Predice el tensor de salida (7, 7, 16)
+- Decodifica el tensor, filtra por THRESHOLD, mapea coords y dibuja BBoxes con confianza.
+- Guarda output video.
+"""
+
+import os
+import argparse
 import cv2
 import numpy as np
 import tensorflow as tf
-import os
-from src.config import LATEST_MODEL_PATH as MODEL_PATH, IMG_SIZE
+from tqdm import tqdm
 
-# ============================
-# CONFIGURACIÓN (Debe coincidir con train.py)
-# ============================
-# Puedes ajustar el color y grosor del recuadro
-BOX_COLOR = (0, 255, 0)  # Verde BGR
-BOX_THICKNESS = 2
+from src.config import MODEL_PATH, IMG_SIZE, OUTPUT_FEED_DIR, THRESHOLD 
+from src.utils.mpd_utils import resize_pad
+# Importar parámetros del modelo Multiplaca y custom loss para cargar el modelo
+from src.models.efficient_detector_multi_placa import GRID_SIZE, BBOX_ANCHORS, yolo_like_loss 
 
-try:
-    # Definimos las métricas que el modelo espera, aunque no las usemos para inferencia.
-    # Usamos las funciones predefinidas de Keras/TensorFlow.
-    custom_objects = {
-        'mse': tf.keras.losses.MeanSquaredError(), # Usa la clase de pérdida para 'mse'
-        'mae': tf.keras.metrics.MeanAbsoluteError() # Usa la clase de métrica para 'mae'
-    }
+os.makedirs(OUTPUT_FEED_DIR, exist_ok=True)
 
-    # Cargar el modelo con custom_objects
-    model = tf.keras.models.load_model(
-        MODEL_PATH, 
-        custom_objects=custom_objects,
-        compile=False # Deshabilitar la recompilación puede ayudar a evitar errores
-    )
-    print(f"✅ Modelo de detección cargado exitosamente desde: {MODEL_PATH}")
+# =======================================================================
+# 1. FUNCIÓN DE DECODIFICACIÓN Y POST-PROCESAMIENTO
+# =======================================================================
 
-except Exception as e:
-    # Si sigue fallando, la arquitectura del modelo podría ser la causa
-    print(f"❌ Error al cargar el modelo: {e}")
-    print("Asegúrate de que la versión de TensorFlow en tu venv sea la misma que la de entrenamiento.")
-    pass
-
-# ============================
-# PREPROCESAMIENTO
-# ============================
-def preprocess_frame(frame: np.ndarray) -> np.ndarray:
+def process_predictions(output_tensor, img_size=IMG_SIZE[0], confidence_threshold=THRESHOLD):
     """
-    Preprocesa un frame para que coincida con la entrada del modelo.
+    Decodifica la salida (1, 7, 7, 16) del modelo Multiplaca, filtra por umbral de confianza 
+    y retorna BBoxes normalizados ([xmin, ymin, xmax, ymax]) y sus scores.
     """
-    # 1. Redimensionar al tamaño de entrenamiento (224x224)
-    img_resized = cv2.resize(frame, IMG_SIZE)
-    # 2. Normalizar a [0, 1]
-    img_normalized = img_resized.astype(np.float32) / 255.0
-    # 3. Añadir la dimensión del batch (1, 224, 224, 3)
-    return np.expand_dims(img_normalized, axis=0)
+    
+    final_boxes_norm = [] # [xmin, ymin, xmax, ymax] normalizado a [0, 1] del frame padded
+    final_scores = []
+    
+    # Reducir el tensor de (1, S, S, D) a (S, S, D)
+    output_tensor = output_tensor[0] 
 
-# ============================
-# DIBUJAR CAJA DELIMITADORA
-# ============================
-def draw_bbox(frame: np.ndarray, normalized_box: np.ndarray) -> np.ndarray:
-    """
-    Convierte las coordenadas normalizadas (x_c, y_c, w, h) a coordenadas
-    absolutas de píxeles y dibuja el recuadro en el frame.
-    """
-    # 1. Dimensiones originales del frame
-    h, w = frame.shape[:2]
-    
-    # 2. Desnormalizar las predicciones
-    x_center_norm, y_center_norm, box_width_norm, box_height_norm = normalized_box
+    for i in range(GRID_SIZE): # cell_y
+        for j in range(GRID_SIZE): # cell_x
+            for b in range(BBOX_ANCHORS): # ancla
+                
+                # Índice de inicio para la ancla 'b'. Cada ancla tiene 5 valores [C, cx, cy, w, h]
+                start_idx = b * 5 
+                prediction = output_tensor[i, j, start_idx : start_idx + 5]
+                
+                confidence = prediction[0] # El primer valor es la confianza
+                
+                # 🚨 APLICAR UMBRAL DE CONFIANZA: Muestra BBox SOLAMENTE si está seguro.
+                if confidence >= confidence_threshold:
+                    
+                    # 1. Decodificación de Coordenadas (de local a normalizado [0, 1] de la imagen)
+                    cx_local, cy_local, w_norm, h_norm = prediction[1:]
+                    
+                    # Coordenadas del centro normalizadas [0, 1] respecto a la imagen
+                    cx_norm = (j + cx_local) / GRID_SIZE 
+                    cy_norm = (i + cy_local) / GRID_SIZE 
+                    
+                    # 2. De (cx, cy, w, h) a (xmin, ymin, xmax, ymax) normalizado
+                    xmin_norm = cx_norm - (w_norm / 2)
+                    ymin_norm = cy_norm - (h_norm / 2)
+                    xmax_norm = cx_norm + (w_norm / 2)
+                    ymax_norm = cy_norm + (h_norm / 2)
+                    
+                    final_boxes_norm.append([xmin_norm, ymin_norm, xmax_norm, ymax_norm])
+                    final_scores.append(confidence)
 
-    # 3. Convertir a coordenadas absolutas de la caja (xmin, ymin, xmax, ymax)
-    
-    # Centro
-    center_x = int(x_center_norm * w)
-    center_y = int(y_center_norm * h)
-    
-    # Ancho y Alto
-    box_w = int(box_width_norm * w)
-    box_h = int(box_height_norm * h)
+    # Nota: Aquí se aplicaría Non-Maximum Suppression (NMS) si fuera necesario para múltiples cajas.
+    return final_boxes_norm, final_scores
 
-    # Coordenadas de esquina (xmin, ymin) y (xmax, ymax)
-    xmin = int(center_x - box_w / 2)
-    ymin = int(center_y - box_h / 2)
-    xmax = int(center_x + box_w / 2)
-    ymax = int(center_y + box_h / 2)
-    
-    # Asegurar que las coordenadas estén dentro del frame
-    xmin = max(0, xmin)
-    ymin = max(0, ymin)
-    xmax = min(w, xmax)
-    ymax = min(h, ymax)
+# =======================================================================
+# 2. CARGA Y EJECUCIÓN DEL MODELO
+# =======================================================================
 
-    # 4. Dibujar el rectángulo
-    cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), BOX_COLOR, BOX_THICKNESS)
-    
-    # 5. Opcional: Añadir una etiqueta
-    label = "PLACA DETECTADA"
-    # Posicionar el texto encima de la caja
-    cv2.putText(frame, label, (xmin, ymin - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, BOX_COLOR, 2)
-    
-    return frame
+def load_model_safe(model_path):
+    try:
+        # Usar custom_objects para cargar el modelo con la función de pérdida personalizada
+        model = tf.keras.models.load_model(
+            model_path, 
+            custom_objects={'yolo_like_loss': yolo_like_loss}, # Importado desde efficient_detector_multi_placa.py
+            compile=False
+        )
+        print(f"Modelo cargado desde: {model_path}")
+        return model
+    except Exception as e:
+        print("Error cargando el modelo (Asegúrese de que la ruta sea correcta y el archivo exista):", e)
+        raise
 
-# ============================
-# INFERENCIA PRINCIPAL
-# ============================
-def run_video_detection(video_path: str):
-    """
-    Ejecuta el detector de placas en un archivo de video.
-    """
+def run_video_detection(video_path, out_video_path=None, img_size=IMG_SIZE[0], display=False):
+    ''' Función principal para correr la detección en un video. '''
+    
+    model = load_model_safe(MODEL_PATH) # Cargar el modelo guardado por train.py
+
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        print(f"❌ Error al abrir el video en la ruta: {video_path}")
-        return
+        raise FileNotFoundError(f"No se pudo abrir el video: {video_path}")
 
-    print(f"\n🎥 Iniciando detección en el video: {video_path}")
+    fps = cap.get(cv2.CAP_PROP_FPS) if cap.get(cv2.CAP_PROP_FPS) > 0 else 25
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    cv2.namedWindow("Detección de Placas (Regresion)", cv2.WINDOW_NORMAL)
+    if out_video_path is None:
+        base = os.path.basename(video_path)
+        from src.config import OUTPUT_FEED_DIR # Importar OUTPUT_FEED_DIR
+        out_video_path = os.path.join(OUTPUT_FEED_DIR, f"det_{base}")
 
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(out_video_path, fourcc, fps, (width, height))
+
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    pbar = tqdm(total=total_frames, desc="Procesando frames")
+    
     while True:
         ret, frame = cap.read()
         if not ret:
-            break # Fin del video
-
-        # 1. Preprocesar y Predecir
-        input_frame = preprocess_frame(frame)
-        # El modelo predice [x_c, y_c, w, h] normalizados
-        predictions = model.predict(input_frame, verbose=0)[0] 
-        
-        # 2. Dibujar la caja delimitadora en el frame original
-        frame_with_box = draw_bbox(frame, predictions)
-
-        # 3. Mostrar el resultado
-        cv2.imshow("Detección de Placas (Regresion)", frame_with_box) # EL MISMO NOMBRE!
-
-        # 4. Salir con 'q'
-        if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # 1. Preprocesamiento (Resize + Pad)
+        img_pad, scale, top, left = resize_pad(rgb, img_size)
+        inp = (img_pad.astype(np.float32) / 255.0)[None, ...]
+
+        # 2. Predicción (Salida: 1, 7, 7, 16)
+        pred_tensor = model.predict(inp, verbose=0)
+        
+        # 3. Decodificación y Filtrado por Umbral (process_predictions)
+        boxes_norm_padded, scores = process_predictions(pred_tensor, img_size=img_size)
+
+        out_frame = frame.copy()
+
+        # 4. Iterar sobre las cajas detectadas que superaron el umbral y dibujar
+        for box_norm, score in zip(boxes_norm_padded, scores):
+            
+            # Mapear de BBox normalizado a píxeles del frame padded
+            x1_p = int(box_norm[0] * img_size)
+            y1_p = int(box_norm[1] * img_size)
+            x2_p = int(box_norm[2] * img_size)
+            y2_p = int(box_norm[3] * img_size)
+
+            # Mapear de padded -> original
+            x1_orig = int(max(0, (x1_p - left) / scale))
+            y1_orig = int(max(0, (y1_p - top) / scale))
+            x2_orig = int(min(width, (x2_p - left) / scale))
+            y2_orig = int(min(height, (y2_p - top) / scale))
+
+            # Dibujar BBox (Solo las que pasaron el umbral)
+            cv2.rectangle(out_frame, (x1_orig, y1_orig), (x2_orig, y2_orig), (0, 255, 0), 2)
+            
+            # Dibujar Etiqueta y Confianza (con 2 decimales)
+            label = f"Placa: {score:.2f}"
+            cv2.putText(out_frame, label, (x1_orig, max(0, y1_orig - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+
+        # 5. Escritura y Display
+        writer.write(out_frame)
+        if display:
+            cv2.imshow("Detección Multiplaca", out_frame)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+        pbar.update(1)
+
     cap.release()
-    cv2.destroyAllWindows()
-    print("✅ Detección de video finalizada.")
+    writer.release()
+    pbar.close()
+    if display:
+        cv2.destroyAllWindows()
+
+    print(f"Video de salida guardado en: {out_video_path}")
+    return out_video_path
+
+
+if __name__ == "__main__":
+    from src.config import TEST_VIDEO_PATH
+    run_video_detection(TEST_VIDEO_PATH)
