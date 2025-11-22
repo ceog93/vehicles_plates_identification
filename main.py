@@ -2,6 +2,7 @@
 '''
 Punto de entrada principal del proyecto
 '''
+from src.utils.gpu_checker import check_gpu_status
 from src.utils.preprocess_and_augmentation import preprocess_and_save_data_modular
 from src.utils.view_web_dataset import view_web_dataset
 from src.train import train_model
@@ -14,6 +15,7 @@ def clean_screen():
 
 def print_header():
     clean_screen()
+    check_gpu_status()
     print('\n')
     print("########################################")
     print("        INTELIGENCIA ARTIFICIAL")

@@ -1,6 +1,7 @@
 # Soporte para Nvidia CUDA
 # pip install nvidia-cudnn-cu12
 
+
 # Librerías básicas
 numpy
 opencv-python
@@ -11,5 +12,7 @@ fiftyone
 
 # Machine Learning / Deep Learning
 tensorflow
+# Usar Para WSL2
+#tensorflow[and-cuda]
 scikit-learn
 scipy

@@ -89,12 +89,6 @@ THRESHOLD = 0.7 # Umbral de predicción
 RANDOM_SEED = 42
 # Número de trabajadores para la carga de datos
 NUM_WORKERS = 4 
-# Dispositivo para entrenamiento/inferencia
-DEVICE = 'cuda' if os.environ.get('USE_CUDA', '0') == '1' else 'cpu'
-# DEVICE = 'cpu'
-# DEVICE = 'cuda'
-# Imprime la configuración del dispositivo
-print(f"Using device: {DEVICE}")
 # ============================= FIN DEL ARCHIVO =============================
 
 
