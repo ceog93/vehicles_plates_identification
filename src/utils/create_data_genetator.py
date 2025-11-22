@@ -4,6 +4,14 @@ import tensorflow as tf
 from tensorflow.keras.preprocessing.image import ImageDataGenerator # type: ignore
 
 def create_data_generators(train_dir, val_dir, img_size, batch_size):
+    '''
+    Se usa para crear generadores de datos para entrenamiento y validación
+    train_dir: directorio de entrenamiento
+    val_dir: directorio de validación
+    img_size: tamaño de las imágenes (tupla)
+    batch_size: tamaño del batch
+    retorna: train_gen, val_gen
+    '''
     train_datagen = ImageDataGenerator(
         rescale=1./255,
         rotation_range=15,

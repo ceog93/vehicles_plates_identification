@@ -1,4 +1,4 @@
-# 03_models/__init__.py
+# 03_production/__init__.py
 '''
-inicializa el paquete models
+inicializa el paquete 03_production
 '''

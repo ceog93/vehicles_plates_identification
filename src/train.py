@@ -4,14 +4,14 @@
 
 import os
 import numpy as np
-import tensorflow as tf
 import pandas as pd
-from tensorflow.keras import layers, models # type: ignore
 from tensorflow.keras.callbacks import CSVLogger, EarlyStopping, ReduceLROnPlateau, ModelCheckpoint # type: ignore
-from tensorflow.keras.applications import MobileNetV2  # type: ignore
 import cv2
 import matplotlib.pyplot as plt
-from src.utils.preprocess_and_augmentation import preprocess_and_save_data_modular
+from src.models.efficient_detector import build_efficient_detector as build_detector # Usa EfficientNetB0 como modelo base
+from src.models.mobile_net_detector import build_mobile_net_detector as build_detector_mobilenet # Alternativa: Usa MobileNetV2 como modelo base
+# from src.utils.preprocess_and_augmentation import preprocess_and_save_data_modular # Se comenta ya que se usa dataset pre-procesado
+
 
 # ============================
 # CONFIGURACIÓN (Importadas de src.config)
@@ -62,35 +62,7 @@ def load_processed_split(data_dir, df_split):
     print(f"             Carga finalizada. {len(X_split)} imágenes procesadas.")
     return np.array(X_split), np.array(y_split)
 '''
-# ============================
-# FUNCIÓN: CONSTRUIR MODELO (Sin cambios)
-# ============================
 
-def build_detector(img_size=IMG_SIZE,learning_rate=LEARNING_RATE):
-    ''' Construir modelo usando MobileNetV2 '''
-    base_model = MobileNetV2(
-        weights='imagenet', 
-        include_top=False, 
-        input_shape=(img_size[0], img_size[1], 3)
-    )
-    base_model.trainable = False
-
-    inputs = layers.Input(shape=(img_size[0], img_size[1], 3))
-    x = base_model(inputs, training=False) 
-    x = layers.GlobalAveragePooling2D()(x) 
-    x = layers.Dense(128, activation='relu')(x)
-    x = layers.Dropout(0.3)(x) 
-    
-    outputs = layers.Dense(4, activation='sigmoid', name='bounding_box_output')(x) 
-    
-    model = models.Model(inputs, outputs) 
-    
-    model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE), 
-        loss=tf.keras.losses.Huber(), 
-        metrics=['mae', 'mse']
-    ) 
-    return model
 
 # ============================
 # FUNCIÓN: GRAFICAR HISTORIAL DE ENTRENAMIENTO (Sin cambios)
@@ -163,7 +135,7 @@ def train_model(epochs=EPOCHS, batch_size=BATCH_SIZE, img_size=IMG_SIZE,learning
     
     # 2. Definir Callbacks
        
-    print(f"             3/6 Compilando modelo con MobileNetV2 (Transfer Learning)...\n")
+    print(f"             3/6 Entrenando y compilando modelo,...\n")
     model = build_detector(img_size=IMG_SIZE, learning_rate=LEARNING_RATE)
     
     print(f"             4/6 Iniciando proceso de entrenamiento con Callbacks...\n")
@@ -171,7 +143,7 @@ def train_model(epochs=EPOCHS, batch_size=BATCH_SIZE, img_size=IMG_SIZE,learning
     # Lista de Callbacks
     callbacks = [
         CSVLogger(TRAINING_LOG_CSV, append=True), # Log de entrenamiento en CSV
-        EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True, verbose=1), # Early Stopping (Detener si no mejora)
+        EarlyStopping(monitor='val_loss', patience=7, restore_best_weights=True, verbose=1), # Early Stopping (Detener si no mejora)
         ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, min_lr=1e-6, verbose=1), # Reducción de tasa de aprendizaje
         ModelCheckpoint(MODEL_PATH,monitor='val_loss',save_best_only=True,verbose=1)
     ]
@@ -184,7 +156,7 @@ def train_model(epochs=EPOCHS, batch_size=BATCH_SIZE, img_size=IMG_SIZE,learning
         epochs=EPOCHS, # Número de epochs (Ciclos completos de entrenamiento)
         # batch_size=BATCH_SIZE, # Tamaño de batch (Número de muestras por actualización de gradiente) # Usado en el generador
         verbose=1, # Mostrar progreso en consola
-        callbacks=callbacks # Llamados para control del entrenamiento 
+        callbacks=callbacks, # Llamados para control del entrenamiento
     )
     
     print(f"\n               4.1 ✅ Entrenamiento completado.")
@@ -201,3 +173,12 @@ def train_model(epochs=EPOCHS, batch_size=BATCH_SIZE, img_size=IMG_SIZE,learning
     input("\nPresione enter para continuar...")
 
     return history, model
+
+# test quick forward pass
+if __name__ == "__main__":
+    # construir modelo
+    m = build_detector(img_size=IMG_SIZE, learning_rate=LEARNING_RATE)
+    import numpy as np
+    x = np.random.rand(1, IMG_SIZE[0], IMG_SIZE[1], 3).astype(np.float32)
+    out = m.predict(x)
+    print("Modelo cargado — salida shape:", out.shape)  # debe ser (1,4)
