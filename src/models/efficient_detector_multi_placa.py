@@ -162,7 +162,9 @@ def yolo_ciou_loss(y_true, y_pred):
     obj_mask = true_conf
 
     # máscara del anchor asignado
-    best_mask = tf.one_hot(best_anchor, NUM_ANCHORS)
+    # Usar el número de anclas calculado dinámicamente (`num_anchors_tensor`) para
+    # evitar discrepancias entre la forma real de salida y la constante del módulo.
+    best_mask = tf.one_hot(best_anchor, tf.cast(num_anchors_tensor, tf.int32))
     best_mask = tf.cast(best_mask, tf.float32)
 
     # --------------- 1) LOSS LOCALIZACIÓN ----------------

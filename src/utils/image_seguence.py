@@ -94,10 +94,15 @@ class ImageSequence(tf.keras.utils.Sequence):
             
             img_path = os.path.join(self.data_dir, file_name)
             img = cv2.imread(img_path)
-            if img is None: continue
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            img = cv2.resize(img, self.image_shape)
-            X[i,] = img.astype('float32') / 255.0
+            if img is None:
+                # Si la imagen falta o está corrupta, rellenar la posición con ceros
+                # y dejar la etiqueta en cero (sin objeto). Esto evita desajustes
+                # en los batches y permite continuar el entrenamiento sin fallos.
+                X[i,] = np.zeros((target_height, target_width, self.n_channels), dtype=np.float32)
+            else:
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                img = cv2.resize(img, self.image_shape)
+                X[i,] = img.astype('float32') / 255.0
 
             # --- 3. Procesamiento de ETIQUETA (Y) - Transformación YOLO/SSD ---
             
