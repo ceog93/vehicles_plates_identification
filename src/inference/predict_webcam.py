@@ -12,21 +12,57 @@ import cv2
 import numpy as np
 import tensorflow as tf
 
-from src.config import MODEL_PATH, IMG_SIZE, OUTPUT_FEED_DIR
+from src.config import MODEL_PATH, IMG_SIZE, OUTPUT_FEED_DIR, ROOT_MODEL_DIR, LATEST_MODEL_PATH
 from src.utils.mpd_utils import resize_pad, nms_numpy
-from src.models.efficient_detector_multi_placa import NUM_ANCHORS, NUM_CLASSES
+from src.models.efficient_detector_multi_placa import NUM_ANCHORS, NUM_CLASSES, yolo_ciou_loss
 import numpy as np
 
 CSV_LABELS_PATH = '/mnt/data/_processed_data_labels.csv'
 os.makedirs(OUTPUT_FEED_DIR, exist_ok=True)
 
-def load_model_safe(model_path):
-    try:
-        model = tf.keras.models.load_model(model_path, compile=False)
-        return model
-    except Exception as e:
-        print("Error al cargar el modelo:", e)
-        raise
+def find_latest_model_in_models_dir():
+    if not os.path.isdir(ROOT_MODEL_DIR):
+        return None
+    subdirs = [d for d in os.listdir(ROOT_MODEL_DIR) if os.path.isdir(os.path.join(ROOT_MODEL_DIR, d))]
+    if not subdirs:
+        return None
+    latest = max(subdirs)
+    candidate_dir = os.path.join(ROOT_MODEL_DIR, latest)
+    for name in ("detector_model.keras", "detector.keras", "detector.h5", "detector"):
+        p = os.path.join(candidate_dir, name)
+        if os.path.exists(p):
+            return p
+    for f in os.listdir(candidate_dir):
+        if f.endswith('.keras') or f.endswith('.h5'):
+            return os.path.join(candidate_dir, f)
+    return None
+
+
+def load_model_safe(model_path=None):
+    candidates = []
+    if model_path:
+        candidates.append(model_path)
+    candidates.append(MODEL_PATH)
+    if LATEST_MODEL_PATH:
+        candidates.append(LATEST_MODEL_PATH)
+    auto = find_latest_model_in_models_dir()
+    if auto:
+        candidates.append(auto)
+
+    last_err = None
+    for p in candidates:
+        if not p:
+            continue
+        if not os.path.exists(p):
+            continue
+        try:
+            model = tf.keras.models.load_model(p, custom_objects={'yolo_ciou_loss': yolo_ciou_loss}, compile=False)
+            print(f"Modelo cargado desde: {p}")
+            return model
+        except Exception as e:
+            last_err = e
+            print(f"Intento de carga falló para {p}: {e}")
+    raise FileNotFoundError(f"No se encontró modelo válido. Intentos: {candidates}. Ultimo error: {last_err}")
 
 def run_webcam(model, cam_index=0, img_size=IMG_SIZE[0], save_output=False, save_dir=OUTPUT_FEED_DIR):
     cap = cv2.VideoCapture(cam_index)
@@ -39,7 +75,18 @@ def run_webcam(model, cam_index=0, img_size=IMG_SIZE[0], save_output=False, save
             break
 
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        img_pad, scale, top, left = resize_pad(rgb, img_size)
+        if img_size is None:
+            try:
+                mshape = model.input_shape
+                if mshape and len(mshape) >= 3 and mshape[1] is not None:
+                    target_size = int(mshape[1])
+                else:
+                    target_size = IMG_SIZE[0]
+            except Exception:
+                target_size = IMG_SIZE[0]
+        else:
+            target_size = img_size
+        img_pad, scale, top, left = resize_pad(rgb, target_size)
         inp = (img_pad.astype(np.float32) / 255.0)[None, ...]
 
         pred = model.predict(inp)
@@ -93,10 +140,10 @@ def run_webcam(model, cam_index=0, img_size=IMG_SIZE[0], save_output=False, save
                         xmax = cx + w_norm / 2
                         ymax = cy + h_norm / 2
 
-                        x1_p = int(xmin * img_size)
-                        y1_p = int(ymin * img_size)
-                        x2_p = int(xmax * img_size)
-                        y2_p = int(ymax * img_size)
+                        x1_p = int(xmin * target_size)
+                        y1_p = int(ymin * target_size)
+                        x2_p = int(xmax * target_size)
+                        y2_p = int(ymax * target_size)
 
                         h, w = frame.shape[:2]
                         x1_orig = int(max(0, (x1_p - left) / scale))
@@ -113,7 +160,8 @@ def run_webcam(model, cam_index=0, img_size=IMG_SIZE[0], save_output=False, save
                     b = boxes[int(idx)]
                     s = scores[int(idx)]
                     cv2.rectangle(out_frame, (b[0], b[1]), (b[2], b[3]), (0,255,0), 2)
-                    cv2.putText(out_frame, f"placa {s:.2f}", (b[0], max(0, b[1]-6)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
+                    # Mostrar confianza en porcentaje
+                    cv2.putText(out_frame, f"Placa: {s*100:.0f}%", (b[0], max(0, b[1]-6)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
 
         cv2.imshow("Webcam - Detección", out_frame)
         key = cv2.waitKey(1) & 0xFF
