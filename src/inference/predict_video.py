@@ -7,9 +7,10 @@ import numpy as np
 import tensorflow as tf
 from tqdm import tqdm
 
-from src.config import MODEL_PATH, IMG_SIZE, OUTPUT_FEED_DIR, THRESHOLD 
-from src.utils.mpd_utils import resize_pad
-from src.models.efficient_detector_multi_placa import GRID_SIZE, BBOX_ANCHORS, yolo_like_loss # Importar para decodificación y carga
+from src.config import MODEL_PATH, IMG_SIZE, OUTPUT_FEED_DIR, THRESHOLD
+from src.utils.mpd_utils import resize_pad, nms_numpy
+from src.models.efficient_detector_multi_placa import GRID_SIZE, NUM_ANCHORS, NUM_CLASSES
+import numpy as np
 
 # ... (otras configuraciones de directorio - SIN CAMBIOS) ...
 
@@ -26,38 +27,48 @@ def process_predictions(output_tensor, img_size=IMG_SIZE[0], confidence_threshol
     final_boxes_norm = [] # [xmin, ymin, xmax, ymax] normalizado a [0, 1] del frame padded
     final_scores = []
     
-    # Reducir el tensor de (1, 7, 7, 16) a (7, 7, 16)
-    output_tensor = output_tensor[0] 
+    # Reducir el tensor si viene con batch dim: (1, G, G, C) -> (G, G, C)
+    arr = np.asarray(output_tensor)
+    if arr.ndim == 4 and arr.shape[0] == 1:
+        arr = arr[0]
 
-    for i in range(GRID_SIZE): # cell_y
-        for j in range(GRID_SIZE): # cell_x
-            for b in range(BBOX_ANCHORS): # ancla
-                
-                start_idx = b * 5 
-                prediction = output_tensor[i, j, start_idx : start_idx + 5]
-                
-                confidence = prediction[0]
-                
-                # APLICAR UMBRAL DE CONFIANZA
-                if confidence >= confidence_threshold:
-                    
-                    # 1. Decodificación de Coordenadas (de local a normalizado [0, 1] de la imagen)
-                    cx_local, cy_local, w_norm, h_norm = prediction[1:]
-                    
-                    cx_norm = (j + cx_local) / GRID_SIZE 
-                    cy_norm = (i + cy_local) / GRID_SIZE 
-                    
-                    # 2. De (cx, cy, w, h) a (xmin, ymin, xmax, ymax) normalizado
-                    xmin_norm = cx_norm - (w_norm / 2)
-                    ymin_norm = cy_norm - (h_norm / 2)
-                    xmax_norm = cx_norm + (w_norm / 2)
-                    ymax_norm = cy_norm + (h_norm / 2)
-                    
-                    final_boxes_norm.append([xmin_norm, ymin_norm, xmax_norm, ymax_norm])
-                    final_scores.append(confidence)
+    gh, gw, channels = arr.shape[:3]
+    per_anchor = 5 + NUM_CLASSES
+    anchors = int(channels // per_anchor)
+    arr = arr.reshape(gh, gw, anchors, per_anchor)
 
-    # Nota: Aquí se aplicaría la NMS si la función apply_nms estuviera implementada.
-    return final_boxes_norm, final_scores
+    for i in range(gh):
+        for j in range(gw):
+            for a in range(anchors):
+                cell = arr[i, j, a]
+                confidence = float(cell[0])
+                if confidence < confidence_threshold:
+                    continue
+                cx_local = float(cell[1])
+                cy_local = float(cell[2])
+                w_norm = float(cell[3])
+                h_norm = float(cell[4])
+
+                cx_norm = (j + cx_local) / gh
+                cy_norm = (i + cy_local) / gh
+
+                xmin_norm = cx_norm - (w_norm / 2)
+                ymin_norm = cy_norm - (h_norm / 2)
+                xmax_norm = cx_norm + (w_norm / 2)
+                ymax_norm = cy_norm + (h_norm / 2)
+
+                final_boxes_norm.append([xmin_norm, ymin_norm, xmax_norm, ymax_norm])
+                final_scores.append(confidence)
+
+    # Aplicar NMS para eliminar duplicados cercanos
+    if len(final_boxes_norm) > 0:
+        selected = nms_numpy(final_boxes_norm, final_scores, iou_thresh=0.45, score_thresh=0.2)
+        final_boxes = [final_boxes_norm[i] for i in selected]
+        final_scores = [final_scores[i] for i in selected]
+    else:
+        final_boxes = []
+
+    return final_boxes, final_scores
 
 # =======================================================================
 # 2. CARGA DEL MODELO (Añadir custom_objects)
