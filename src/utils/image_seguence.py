@@ -7,11 +7,11 @@ import pandas as pd
 import tensorflow as tf
 import os
 import cv2 # Usaremos OpenCV para cargar y redimensionar imágenes
-# --- Nuevos Parámetros Necesarios para el Generador (Definidos al inicio del modelo) ---
-GRID_SIZE = 7       
-BBOX_ANCHORS = 3    
-NUM_CLASSES = 1     
-OUTPUT_DIM = (5 * BBOX_ANCHORS) + NUM_CLASSES 
+# Importar parámetros del modelo para mantener consistencia entre salida y etiquetas
+from src.models.efficient_detector_multi_placa import GRID_SIZE, NUM_ANCHORS as BBOX_ANCHORS, NUM_CLASSES, BBOX_DIM
+
+# OUTPUT_DIM debe coincidir con la capa final del modelo: anchors * (bbox_dim + num_classes)
+OUTPUT_DIM = int(BBOX_ANCHORS * (BBOX_DIM + NUM_CLASSES))
 
 class ImageSequence(tf.keras.utils.Sequence):
     """Generador de datos para Keras que carga imágenes por lotes."""

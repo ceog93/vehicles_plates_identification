@@ -18,7 +18,8 @@ from tqdm import tqdm
 from src.config import MODEL_PATH, IMG_SIZE, OUTPUT_FEED_DIR, THRESHOLD 
 from src.utils.mpd_utils import resize_pad
 # Importar parámetros del modelo Multiplaca y custom loss para cargar el modelo
-from src.models.efficient_detector_multi_placa import GRID_SIZE, BBOX_ANCHORS, yolo_like_loss 
+from src.models.efficient_detector_multi_placa import GRID_SIZE, NUM_ANCHORS, yolo_ciou_loss
+ 
 
 os.makedirs(OUTPUT_FEED_DIR, exist_ok=True)
 
@@ -40,7 +41,7 @@ def process_predictions(output_tensor, img_size=IMG_SIZE[0], confidence_threshol
 
     for i in range(GRID_SIZE): # cell_y
         for j in range(GRID_SIZE): # cell_x
-            for b in range(BBOX_ANCHORS): # ancla
+            for b in range(NUM_ANCHORS): # ancla
                 
                 # Índice de inicio para la ancla 'b'. Cada ancla tiene 5 valores [C, cx, cy, w, h]
                 start_idx = b * 5 
@@ -79,7 +80,7 @@ def load_model_safe(model_path):
         # Usar custom_objects para cargar el modelo con la función de pérdida personalizada
         model = tf.keras.models.load_model(
             model_path, 
-            custom_objects={'yolo_like_loss': yolo_like_loss}, # Importado desde efficient_detector_multi_placa.py
+            custom_objects={'yolo_ciou_loss': yolo_ciou_loss}, # Importado desde efficient_detector_multi_placa.py
             compile=False
         )
         print(f"Modelo cargado desde: {model_path}")

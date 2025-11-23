@@ -1,179 +1,182 @@
-# src/models/efficient_detector_multi_placa.py
-
 import tensorflow as tf
-from tensorflow.keras import layers, models  # type: ignore
-from tensorflow.keras.applications import EfficientNetB0  # type: ignore
+from tensorflow.keras import layers, models
+from tensorflow.keras.applications import EfficientNetB0
 import numpy as np
 
-# Se asume que IMG_SIZE = (W, H)
 from src.config import IMG_SIZE, LEARNING_RATE
 
-# ============================================
-# PARÁMETROS CRÍTICOS para el modelo Multiplaca
-# ============================================
-GRID_SIZE = 7       # La imagen se reduce a una cuadrícula S x S (ej. 7x7)
-BBOX_ANCHORS = 3    # Número de 'bounding boxes' (o anclas) a predecir por celda
-NUM_CLASSES = 1     # Solo la clase 'Placa'
-OUTPUT_DIM = (5 * BBOX_ANCHORS) + NUM_CLASSES # 16 = (5*3) + 1
 
-def yolo_like_loss(y_true, y_pred):
-    """
-    Función de pérdida personalizada (Custom Loss) tipo YOLO/SSD simplificada.
-    
-    y_true shape: (Batch, GRID_SIZE, GRID_SIZE, OUTPUT_DIM)
-    y_pred shape: (Batch, GRID_SIZE, GRID_SIZE, OUTPUT_DIM)
-    """
-    
-    # Parámetros de penalización (GRID_SIZE=7, BBOX_ANCHORS=3)
-    lambda_coord = 5.0  # Peso para la localización
-    lambda_noobj = 0.5  # Peso para celdas sin objeto
-    
-    # response_mask: 1.0 si hay objeto en esa celda, 0.0 si no. (Batch, S, S, 1)
-    # response_mask es el canal 0 de y_true
-    response_mask = y_true[..., 0:1] 
-    
-    # =====================================================================
-    # 1. Pérdida de Confianza (Confidence Loss) - Calculada sobre las 3 Anclas
-    # =====================================================================
-    
-    # Separar las confianzas predichas para las 3 anclas (Canales 0, 5, 10)
-    pred_conf_list = [y_pred[..., i * 5 : i * 5 + 1] for i in range(BBOX_ANCHORS)]
-    pred_all_conf = tf.concat(pred_conf_list, axis=-1) # Shape (Batch, S, S, 3)
-    
-    # Crear el tensor de confianza Ground Truth (1.0 en Anchor 1, 0.0 en Anchor 2 y 3)
-    true_conf_1 = y_true[..., 0:1]
-    true_conf_rest = tf.zeros_like(true_conf_1)
-    
-    # true_all_conf: Shape (Batch, S, S, 3) -> [C1_GT, 0, 0]
-    true_all_conf = tf.concat([true_conf_1, true_conf_rest, true_conf_rest], axis=-1) 
+def tf_maybe_print(*args, **kwargs):
+    """tf.print solo en modo eager para evitar ops de string en grafos XLA."""
+    if tf.executing_eagerly():
+        tf.print(*args, **kwargs)
 
-    # Máscara de respuesta expandida: 1.0 en Anchor 1 si hay objeto. 0.0 en Anchor 2 y 3.
-    response_mask_expanded = tf.concat([response_mask, tf.zeros_like(response_mask), tf.zeros_like(response_mask)], axis=-1) # Shape (Batch, S, S, 3)
+# ===============================
+# CONFIGURACIÓN MULTI-PLACA REAL
+# ===============================
+GRID_SIZE = 13
+NUM_ANCHORS = 3
+NUM_CLASSES = 1
+BBOX_DIM = 5
 
-    # a) Pérdida para celdas CON objeto (Solo Anchor 1 tiene 1.0 en response_mask_expanded)
-    obj_loss = response_mask_expanded * tf.square(pred_all_conf - true_all_conf)
-    
-    # b) Pérdida para celdas SIN objeto
-    noobj_mask = 1.0 - response_mask_expanded
-    
-    # Aplicamos lambda_noobj al error en todas las anclas donde no hay objeto.
-    noobj_loss = lambda_noobj * noobj_mask * tf.square(pred_all_conf - true_all_conf)
-
-    confidence_loss = tf.reduce_sum(obj_loss + noobj_loss)
-    
-    # =====================================================================
-    # 2. Pérdida de Localización (Localization Loss) - Solo para la Ancla 1
-    # =====================================================================
-    
-    # Los boxes predichos y verdaderos para Anchor 1 están en los canales 1:5 (cx1, cy1, w1, h1)
-    pred_boxes = y_pred[..., 1:5] # (Batch, S, S, 4)
-    true_boxes = y_true[..., 1:5] # (Batch, S, S, 4)
-    
-    # Máscara para localización: replicar response_mask 4 veces (para cx, cy, w, h)
-    response_mask_boxes = tf.concat([response_mask] * 4, axis=-1) # (Batch, S, S, 4)
-    
-    # Pérdida para (cx, cy)
-    coord_xy_loss = response_mask_boxes[..., 0:2] * tf.square(true_boxes[..., 0:2] - pred_boxes[..., 0:2])
-    
-    # Pérdida para (w, h) (Usando raíz cuadrada para estabilización)
-    pred_wh_sqrt = tf.sign(pred_boxes[..., 2:4]) * tf.sqrt(tf.abs(pred_boxes[..., 2:4]) + 1e-6)
-    true_wh_sqrt = tf.sign(true_boxes[..., 2:4]) * tf.sqrt(tf.abs(true_boxes[..., 2:4]) + 1e-6)
-    
-    coord_wh_loss = response_mask_boxes[..., 2:4] * tf.square(true_wh_sqrt - pred_wh_sqrt)
-    
-    # Multiplicar por lambda_coord
-    localization_loss = lambda_coord * tf.reduce_sum(coord_xy_loss + coord_wh_loss)
-    
-    # =====================================================================
-    # 3. Pérdida de Clasificación (Classification Loss) - Último Canal (15)
-    # =====================================================================
-    
-    # El canal de clase está en la última posición.
-    # 🛑 FIX: Usamos [-1:] para mantener la dimensión de canal 1: [B, S, S, 1]
-    true_class = y_true[..., -1:] 
-    pred_class = y_pred[..., -1:]
-    
-    # response_mask tiene forma [B, S, S, 1], ahora true/pred_class también.
-    class_loss = response_mask * tf.square(true_class - pred_class)
-    classification_loss = tf.reduce_sum(class_loss)
-    
-    # =====================================================================
-    # 4. Pérdida Total (Se re-incluye la pérdida de clasificación)
-    # =====================================================================
-    total_loss = localization_loss + confidence_loss + classification_loss
-    
-    return total_loss
+OUTPUT_DIM = NUM_ANCHORS * (BBOX_DIM + NUM_CLASSES)  # 18
 
 
-def build_multishot_detector_from_scratch(img_size=IMG_SIZE, learning_rate=LEARNING_RATE):
-    """
-    Detector Multiplaca basado en Grid (SSD simplificado)
-    ENTRENADO 100% DESDE CERO (weights=None).
-    """
+# ==================================================
+#                     CIOU
+# ==================================================
+def bbox_ciou(b1, b2):
+    b1_x1 = b1[..., 0] - b1[..., 2] / 2
+    b1_y1 = b1[..., 1] - b1[..., 3] / 2
+    b1_x2 = b1[..., 0] + b1[..., 2] / 2
+    b1_y2 = b1[..., 1] + b1[..., 3] / 2
 
-    # ============================================
-    # 1. Backbone EfficientNetB0 (SIN PREENTRENAR)
-    # ============================================
-    inputs = layers.Input(shape=(img_size[0], img_size[1], 3))
-    
-    # Preprocesamiento simple (escala 0-1)
-    x = layers.Rescaling(1./255)(inputs) 
+    b2_x1 = b2[..., 0] - b2[..., 2] / 2
+    b2_y1 = b2[..., 1] - b2[..., 3] / 2
+    b2_x2 = b2[..., 0] + b2[..., 2] / 2
+    b2_y2 = b2[..., 1] + b2[..., 3] / 2
 
-    base = EfficientNetB0(
-        include_top=False,
-        weights=None,                   # ! Restricción: entrenamiento desde cero
-        input_tensor=x                  # Conectar al input preprocesado
+    x1 = tf.maximum(b1_x1, b2_x1)
+    y1 = tf.maximum(b1_y1, b2_y1)
+    x2 = tf.minimum(b1_x2, b2_x2)
+    y2 = tf.minimum(b1_y2, b2_y2)
+
+    inter = tf.maximum(0.0, x2 - x1) * tf.maximum(0.0, y2 - y1)
+
+    area1 = (b1_x2 - b1_x1) * (b1_y2 - b1_y1)
+    area2 = (b2_x2 - b2_x1) * (b2_y2 - b2_y1)
+
+    union = area1 + area2 - inter + 1e-6
+    iou = inter / union
+
+    c_dist = tf.square(b1[..., 0] - b2[..., 0]) + tf.square(b1[..., 1] - b2[..., 1])
+
+    cw = tf.maximum(b1_x2, b2_x2) - tf.minimum(b1_x1, b2_x1)
+    ch = tf.maximum(b1_y2, b2_y2) - tf.minimum(b1_y1, b2_y1)
+    c_diag = tf.square(cw) + tf.square(ch) + 1e-6
+
+    v = (4 / (np.pi ** 2)) * tf.square(
+        tf.atan(b1[..., 2] / (b1[..., 3] + 1e-6)) -
+        tf.atan(b2[..., 2] / (b2[..., 3] + 1e-6))
     )
+    alpha = v / (1 - iou + v + 1e-6)
+
+    ciou = iou - (c_dist / c_diag) - alpha * v
+    return ciou
+
+
+# ==================================================
+#                   LOSS COMPLETA
+# ==================================================
+def yolo_ciou_loss(y_true, y_pred):
+
+    # Usar shapes dinámicas en tiempo de ejecución para evitar errores
+    batch = tf.shape(y_pred)[0]
+    grid_h = tf.shape(y_pred)[1]
+    grid_w = tf.shape(y_pred)[2]
+    channels = tf.shape(y_pred)[3]
+
+    per_anchor = BBOX_DIM + NUM_CLASSES
+
+    # Comprobar que el número de canales es divisible por lo esperado (por ancla)
+    mod = tf.math.floormod(channels, per_anchor)
+    # Evitar mensajes de debug que introduzcan ops no soportadas por XLA (StringFormat)
+    with tf.control_dependencies([
+        tf.debugging.assert_equal(mod, 0),
+    ]):
+        num_anchors_tensor = tf.math.floordiv(channels, per_anchor)
+    # Imprimir shapes solo en modo eager (no crea ops en grafos compilados)
+    tf_maybe_print("[yolo_loss] shapes -> batch:", batch, "grid:", grid_h, grid_w,
+                   "channels:", channels, "anchors:", num_anchors_tensor)
+
+    pred = tf.reshape(
+        y_pred,
+        (batch, grid_h, grid_w, num_anchors_tensor, per_anchor)
+    )
+    true = tf.reshape(
+        y_true,
+        (batch, grid_h, grid_w, num_anchors_tensor, per_anchor)
+    )
+
+    pred_conf = pred[..., 0]
+    pred_bbox = pred[..., 1:5]
+    pred_cls  = pred[..., 5:6]
+
+    true_conf = true[..., 0]
+    true_bbox = true[..., 1:5]
+    true_cls  = true[..., 5:6]
+
+    # IoU para asignación
+    ious = bbox_ciou(pred_bbox, true_bbox)
+    best_anchor = tf.argmax(ious, axis=-1)  # (B,13,13)
+
+    # máscara objeto
+    obj_mask = true_conf
+
+    # máscara del anchor asignado
+    best_mask = tf.one_hot(best_anchor, NUM_ANCHORS)
+    best_mask = tf.cast(best_mask, tf.float32)
+
+    # --------------- 1) LOSS LOCALIZACIÓN ----------------
+    ciou = bbox_ciou(pred_bbox, true_bbox)
+    ciou_term = best_mask * (1 - ciou)  # [B,13,13,3]
+
+    loc_loss = obj_mask * tf.reduce_sum(ciou_term, axis=-1, keepdims=True)
+
+    # ---------------- 2) LOSS CONF -----------------------
+    conf_loss = tf.keras.losses.binary_crossentropy(true_conf, pred_conf)
+
+    # ---------------- 3) LOSS CLASE ----------------------
+    class_loss = obj_mask * tf.keras.losses.binary_crossentropy(true_cls, pred_cls)
+
+    total = (
+        tf.reduce_sum(loc_loss) +
+        tf.reduce_sum(conf_loss) +
+        tf.reduce_sum(class_loss)
+    )
+
+    return total
+
+
+# ==================================================
+#                  MODELO COMPLETO
+# ==================================================
+def build_multishot_detector_from_scratch(img_size=IMG_SIZE, learning_rate=LEARNING_RATE):
+
+    inputs = layers.Input(shape=(img_size[0], img_size[1], 3))
+    x = layers.Rescaling(1./255)(inputs)
+
+    base = EfficientNetB0(include_top=False, weights=None, input_tensor=x)
     base.trainable = True
 
-    # ============================================
-    # 2. Cabeza de Detección (Detection Head)
-    # ============================================
-    
-    x = base.output 
-    
-    # 🛑 FIX ARQUITECTÓNICO: Insertar Resizing para forzar 7x7
-    # La salida de EfficientNetB0 es 10x10 o 13x13 para input 320x320.
-    # Necesitamos 7x7 para que coincida con GRID_SIZE.
-    x = layers.Resizing(GRID_SIZE, GRID_SIZE, interpolation='bilinear')(x) # <-- ¡ESTA ES LA LÍNEA CRÍTICA!
+    x = layers.Resizing(GRID_SIZE, GRID_SIZE)(base.output)
 
-    # Capas convolucionales para refinar las características del backbone
-    # Ahora esta capa ya recibe 7x7 y opera sobre 7x7.
-    x = layers.Conv2D(512, 3, padding='same', activation='relu')(x)
-    x = layers.BatchNormalization()(x) 
-    x = layers.Dropout(0.3)(x)
+    x = layers.Conv2D(512, 3, padding="same", activation="relu")(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Conv2D(256, 3, padding="same", activation="relu")(x)
+    x = layers.BatchNormalization()(x)
 
-    # Última capa Conv: La salida final debe ser (S, S, OUTPUT_DIM) -> (7, 7, 16)
     outputs = layers.Conv2D(
-        OUTPUT_DIM, 
-        kernel_size=1, 
-        padding='same', 
-        name="detection_output",
-        activation='sigmoid' 
-    )(x) 
-    
+        OUTPUT_DIM,
+        kernel_size=1,
+        padding="same",
+        activation="sigmoid",
+        name="detection_output"
+    )(x)
+
     model = models.Model(inputs, outputs)
 
-    # ============================================
-    # 3. Compilación del modelo
-    # ============================================
-    
-    # Aquí usamos la función de pérdida personalizada definida arriba
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
-        loss=yolo_like_loss, 
-        metrics=['accuracy'] # Métricas simples. Deben añadirse métricas IOU personalizadas.
+        optimizer=tf.keras.optimizers.Adam(learning_rate),
+        loss=yolo_ciou_loss,
     )
 
     return model
 
+
 if __name__ == "__main__":
-    # Test rápido de la forma de salida (debe ser (1, 7, 7, 16))
     m = build_multishot_detector_from_scratch()
     x = np.random.rand(1, IMG_SIZE[0], IMG_SIZE[1], 3).astype(np.float32)
     out = m.predict(x)
-    print("Modelo Multiplaca cargado — salida shape:", out.shape)
-    
-    # Verificar la forma esperada
-    expected_shape = (1, GRID_SIZE, GRID_SIZE, OUTPUT_DIM)
-    assert out.shape == expected_shape, f"La forma de salida es {out.shape}, se esperaba {expected_shape}"
+    print("Salida:", out.shape)
+    print("Modelo EfficientDet Multi-Placa creado correctamente.")
