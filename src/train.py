@@ -94,9 +94,10 @@ def train_model(epochs=EPOCHS, batch_size=BATCH_SIZE, img_size=IMG_SIZE,learning
     print("=========================================")
     
     # 1. Configuración de directorios de salida
+    # Crear las carpetas necesarias para guardar checkpoints, logs y plots
+    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
     os.makedirs(LOGS_DIR, exist_ok=True)
     os.makedirs(PLOTS_DIR, exist_ok=True)
-    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True) 
 
     '''
     # --------------------------  PREPROCESAMIENTO Y GUARDADO DE DATOS --------------------------

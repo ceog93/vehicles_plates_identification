@@ -43,13 +43,16 @@ model_name = (f"model_{current_time}")
 CURRENT_MODEL_DIR = os.path.join(ROOT_MODEL_DIR, model_name)
 # Ruta completa para guardar el modelo: 02_models/<FECHA_ACTUAL>/detector
 MODEL_PATH = os.path.join(CURRENT_MODEL_DIR, "detector_model.keras")
-#os.makedirs(CURRENT_MODEL_DIR, exist_ok=True) # Asegura que la carpeta del modelo actual exista
 LOGS_DIR = os.path.join(CURRENT_MODEL_DIR, "logs")
-os.makedirs(LOGS_DIR, exist_ok=True) # Asegura que la carpeta de logs exista
 PLOTS_DIR = os.path.join(LOGS_DIR, "plots")
-os.makedirs(PLOTS_DIR, exist_ok=True) # Asegura que la carpeta de plots exista
 TRAINING_LOG_CSV = os.path.join(LOGS_DIR, "training_log.csv")
 TRAINING_LOSS_PLOT_PATH = os.path.join(PLOTS_DIR, "training_loss.png")
+
+# Nota: No crear las carpetas de modelo (CURRENT_MODEL_DIR, LOGS_DIR, PLOTS_DIR)
+# en el momento de importar `src.config`, porque esto provocaba que se
+# generaran carpetas vacías cada vez que se ejecutaba `main.py` u otros
+# scripts que importan `src.config`. Estas carpetas se crean explícitamente
+# cuando se inicia el entrenamiento en `train.py` (ver `train_model`).
 
 # --- Configuración para CARGAR el último modelo entrenado ---
 LATEST_MODEL_PATH = None
