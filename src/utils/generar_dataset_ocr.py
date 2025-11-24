@@ -7,6 +7,16 @@ from PIL import Image, ImageDraw, ImageFont
 OUTPUT_DIR = "data_ocr"
 IMG_SIZE = (32, 32) # Tamaño pequeño estándar para OCR
 SAMPLES_PER_CLASS = 1000 # 1000 imágenes por cada letra/número
+# Para ejecución rápida durante pruebas, puede sobreescribirse con la
+# variable de entorno OCR_SAMPLES_PER_CLASS (ej: 100)
+try:
+    env_val = os.environ.get('OCR_SAMPLES_PER_CLASS', '')
+    if env_val:
+        env_val = int(env_val)
+        if env_val > 0:
+            SAMPLES_PER_CLASS = env_val
+except Exception:
+    pass
 CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 FONT_PATH = "ruta/a/tu/fuente/placa.ttf" # ¡USA LA MISMA FUENTE QUE TU GENERADOR DE PLACAS!
 
