@@ -24,8 +24,8 @@ la lectura y mantenimiento por el equipo.
 """
 
 import tensorflow as tf
-from tensorflow.keras import layers, models
-from tensorflow.keras.applications import EfficientNetB0
+from tensorflow.keras import layers, models # type: ignore
+from tensorflow.keras.applications import EfficientNetB0 # type: ignore
 import numpy as np
 
 from src.config import IMG_SIZE, LEARNING_RATE
