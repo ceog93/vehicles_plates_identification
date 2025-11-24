@@ -64,7 +64,7 @@ if os.path.exists(ROOT_MODEL_DIR):
         # La subcarpeta más reciente (el string más grande por orden alfabético)
         latest_subdir = max(subdirs) 
         # Ruta completa del detector en la versión más reciente
-        LATEST_MODEL_PATH = os.path.join(ROOT_MODEL_DIR, latest_subdir, "detector")
+        LATEST_MODEL_PATH = os.path.join(ROOT_MODEL_DIR, latest_subdir, "detector_model.keras")
 
 # ============================= PRODUCCIÓN =============================
 # Carpeta para producción (videos para inferencia)

@@ -2,26 +2,35 @@
 '''
 Punto de entrada principal del proyecto
 '''
+
 from src.utils.gpu_checker import check_gpu_status
 from src.utils.preprocess_and_augmentation import preprocess_and_save_data_modular
 from src.utils.view_web_dataset import view_web_dataset
 from src.train import train_model
-# Importar funciones de inferencia existentes
+from src.config import LATEST_MODEL_PATH
+
+# inferencia
 from src.inference.predict_image import infer_image
-from src.inference.predict_video import process_video, load_model_safe as load_model_safe_vid, find_latest_model_in_models_dir
+from src.inference.predict_video import (
+    process_video as run_video_detection,
+    load_model_safe,
+    find_latest_model_in_models_dir
+)
 from src.inference.predict_webcam import run_webcam
-from src.infer_video import run_video_detection
+
 from src.config import INPUT_FEED_DIR, OUTPUT_FEED_DIR
 import glob
 import os
 
+
 def clean_screen():
-    #borrar pantalla
     os.system('cls' if os.name == 'nt' else 'clear')
+
 
 def print_header():
     clean_screen()
     check_gpu_status()
+    input(' Presione enter para continuar...')
     print('\n')
     print("########################################")
     print("        INTELIGENCIA ARTIFICIAL")
@@ -35,6 +44,7 @@ def print_header():
     input(' Presione enter para continuar...')
     clean_screen()
 
+
 def menu():
     clean_screen()
     print('\n')
@@ -42,128 +52,169 @@ def menu():
     print("============ MENÚ PRINCIPAL =============")
     print("===== DETECTOR DE PLACAS COLOMBIANAS ====")
     print("=========================================\n")
-    
-    print("     1. (¡PRECAUCIÓN!) Preprocesar y aumentar dataset (Reemplaza dataset actual)")
-    print("     2. Ver dataset procesado en visor web")
-    print("     3. Entrenar modelo nuevo")
-    print("     4. Inferir placas (Imagen / Video / Webcam)")
-    print("     5. Finalizar programa\n")
-    option = input("        Seleccione opción (1/2/3/4/5): ")
+
+    print(" 1. Preprocesar dataset (⚠ reemplaza)")
+    print(" 2. Ver dataset web")
+    print(" 3. Entrenar modelo nuevo")
+    print(" 4. Inferir (imagen / video / webcam)")
+    print(" 5. Finalizar\n")
+
+    option = input("Seleccione opción (1/2/3/4/5): ")
     clean_screen()
     return option
 
+
 def main():
-    
+
     option = menu()
 
+    # =======================================================
+    # 1. Preprocesamiento
+    # =======================================================
     if option == "1":
-        preprocess_and_save_data_modular() # Se puede ajustar parámetros dentro de la función
-        main()
+        preprocess_and_save_data_modular()
+        return main()
+
+    # =======================================================
+    # 2. Ver dataset
+    # =======================================================
     elif option == "2":
         view_web_dataset()
-        main()
-        pass
+        return main()
+
+    # =======================================================
+    # 3. Entrenar
+    # =======================================================
     elif option == "3":
-        train_model() # Se puede ajustar parámetros dentro de la función
-        main()
+        train_model()
+        return main()
+
+    # =======================================================
+    # 4. INFERENCIA
+    # =======================================================
     elif option == "4":
-        # Nuevo sub-menú: elegir entre inferir imagen, video o webcam
-        print("Seleccione modo de inferencia:")
+
+        print("Seleccione modo:")
         print(" 1. Imagen")
         print(" 2. Video")
         print(" 3. Webcam")
+
         mode = input("Elija (1/2/3): ")
 
-        # Cargar modelo una vez; priorizar la ruta del último modelo existente
+        # cargar modelo automáticamente UNA sola vez
         try:
-            auto_model = find_latest_model_in_models_dir()
-            if auto_model:
-                model = load_model_safe_vid(auto_model)
-            else:
-                model = load_model_safe_vid(None)
+            print(f"Cargando modelo automáticamente desde: {LATEST_MODEL_PATH}")
+            input("Presione Enter para continuar...")
+            model = load_model_safe(LATEST_MODEL_PATH)
         except Exception as e:
             print("No se pudo cargar el modelo:", e)
-            main()
-            return
+            input("Presione Enter para continuar...")
+            return main()
 
+        # ------------------ IMAGEN -------------------
         if mode == "1":
-            # Procesar por defecto todas las imágenes en INPUT_FEED_DIR
-            img_path = INPUT_FEED_DIR
+            print("Seleccion de modo: Imagen")
+            input("Presione Enter para continuar...")
+            in_dir = INPUT_FEED_DIR
             out_dir = OUTPUT_FEED_DIR
             os.makedirs(out_dir, exist_ok=True)
 
-            exts = ('.jpg', '.jpeg', '.png', '.bmp', '.tiff')
-            files = [f for f in sorted(glob.glob(os.path.join(img_path, '*'))) if f.lower().endswith(exts)]
-            if not files:
-                print("No se encontraron imágenes en INPUT_FEED_DIR.")
-            for f in files:
-                base = os.path.basename(f)
-                out_p = os.path.join(out_dir, f"det_{base}")
-                print(f"Procesando imagen: {f} -> {out_p}")
-                try:
-                    infer_image(model, f, out_path=out_p)
-                except Exception as e:
-                    print('Error procesando', f, e)
+            exts = ('.jpg', '.jpeg', '.png', '.bmp')
+            files = sorted([f for f in glob.glob(in_dir + "/*") if f.lower().endswith(exts)])
 
-            input('Presione enter para continuar...')
-            main()
+            if not files:
+                print("No hay imágenes en INPUT_FEED_DIR")
+            else:
+                for f in files:
+                    out_f = os.path.join(out_dir, "det_" + os.path.basename(f))
+                    infer_image(model, f, out_path=out_f)
+
+            input("Enter para continuar...")
+            return main()
+
+        # ------------------ VIDEO -------------------
+        # ------------------ VIDEO -------------------
         elif mode == "2":
-            # Procesar por defecto todos los videos en INPUT_FEED_DIR
-            video_path = INPUT_FEED_DIR
+            print("Seleccion de modo: Video")
+            input("Presione Enter para continuar...")
+            in_dir = INPUT_FEED_DIR
             out_dir = OUTPUT_FEED_DIR
             os.makedirs(out_dir, exist_ok=True)
 
-            vexts = ('.mp4', '.avi', '.mov', '.mkv')
-            files = [f for f in sorted(glob.glob(os.path.join(video_path, '*'))) if f.lower().endswith(vexts)]
-            if not files:
-                print("No se encontraron videos en INPUT_FEED_DIR.")
-            for f in files:
-                base = os.path.basename(f)
-                print(f"Procesando video: {f} (se guardará en {out_dir} con timestamp)")
-                try:
-                    # dejar que process_video cree el nombre del video con timestamp y mostrar en tiempo real
-                    # Parámetros: aspect_ratio_min relajado para aceptar placas, confirm_frames para estabilidad
-                    process_video(model, f, out_video_path=None, display=True,
-                                  confirm_frames=3, iou_thresh=0.45, min_area=1500,
-                                  aspect_ratio_min=1.0, aspect_ratio_max=10.0)
-                except Exception as e:
-                    print('Error procesando', f, e)
+            vext = ('.mp4', '.avi', '.mov', '.mkv')
+            files = sorted([f for f in glob.glob(in_dir + "/*") if f.lower().endswith(vext)])
 
-            input('Presione enter para continuar...')
-            main()
+            if not files:
+                print("No hay videos en INPUT_FEED_DIR")
+            else:
+                for vid in files:
+                    print(f"Procesando video (OCR colombiano multiplaca): {vid}")
+                    try:
+                        # CORRECCIÓN: 'input_video' se cambia a 'video_path'
+                        run_video_detection(
+                            model=model,
+                            video_path=vid, 
+                            # Cambié 'output_folder=out_dir' por 'out_video_path'
+                            # ya que la función process_video solo acepta out_video_path.
+                            # El manejo del path de salida se hace dentro de process_video si es None.
+                            out_video_path=None, 
+                            display=True, # show_window se llama 'display' en process_video
+                            iou_thresh=0.45, # nms_thresh se llama 'iou_thresh'
+                            min_area=1400,
+                            # Los argumentos 'min_conf', 'max_area', 'allow_vertical', y 'ocr_lang' 
+                            # no existen en la definición de process_video que proporcionaste, 
+                            # por lo que deben ser removidos o ajustados a los parámetros de process_video.
+                            max_missed=5,
+                            confirm_frames=3,
+                            aspect_ratio_min=2.0,
+                            aspect_ratio_max=6.0
+                        )
+                    except Exception as e:
+                        print("Error procesando", vid, e)
+
+            input("Enter para continuar...")
+            return main()
+
+        # ------------------ WEBCAM -------------------
         elif mode == "3":
-            # Listar cámaras y permitir selección interactiva
+            print("Seleccion de modo: Webcam")
+            input("Presione Enter para continuar...")
             from src.inference.predict_webcam import list_cameras
-            cams = list_cameras(max_index=8)
+            cams = list_cameras()
+
             if not cams:
-                print("No se detectaron cámaras disponibles.")
-                input('Presione enter para continuar...')
-                main()
-                return
+                print("No se detectaron cámaras.")
+                input("Enter para continuar...")
+                return main()
+
             print("Cámaras detectadas:")
-            for idx in cams:
-                print(f" - {idx}")
-            sel = input(f"Seleccione índice de cámara (enter para {cams[0]}): ")
-            try:
-                cam_index = int(sel) if sel.strip() != "" else cams[0]
-            except Exception:
-                cam_index = cams[0]
-            # Guardado automático: guardar video y frames con confianza >= 90%
-            save = True
-            run_webcam(model, cam_index=cam_index, save_output=save, save_video=True, save_high_conf=True, high_conf_thresh=1.0)
-            input('Presione enter para continuar...')
-            main()
+            for c in cams:
+                print(" -", c)
+
+            sel = input(f"Seleccione cámara (enter={cams[0]}): ")
+            cam = int(sel) if sel.strip() else cams[0]
+
+            run_webcam(model, cam_index=cam)
+
+            input("Enter para continuar...")
+            return main()
+
         else:
-            print("Opción inválida en sub-menú de inferencia.")
-            main()
+            print("Opción inválida.")
+            return main()
+
+    # =======================================================
+    # 5. SALIR
+    # =======================================================
     elif option == "5":
-        print("Finalizando programa. ¡Hasta luego!")
+        print("Hasta luego!")
         exit(0)
+
     else:
         print("Opción inválida.")
-        main()
+        return main()
+
 
 if __name__ == "__main__":
     print_header()
     main()
-
