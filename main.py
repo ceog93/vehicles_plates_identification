@@ -119,10 +119,10 @@ def main():
                 print("No se encontraron videos en INPUT_FEED_DIR.")
             for f in files:
                 base = os.path.basename(f)
-                out_p = os.path.join(out_dir, f"det_{base}")
-                print(f"Procesando video: {f} -> {out_p}")
+                print(f"Procesando video: {f} (se guardará en {out_dir} con timestamp)")
                 try:
-                    process_video(model, f, out_video_path=out_p, display=False)
+                    # dejar que process_video cree el nombre del video con timestamp y mostrar en tiempo real
+                    process_video(model, f, out_video_path=None, display=True)
                 except Exception as e:
                     print('Error procesando', f, e)
 

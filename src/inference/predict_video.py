@@ -1,7 +1,13 @@
-# src/inference/predict_video.py
+"""Inferencia de video - versión final limpia.
+"""
 
 import os
 import argparse
+from datetime import datetime
+import csv
+import queue
+import threading
+
 import cv2
 import numpy as np
 import tensorflow as tf
@@ -9,34 +15,19 @@ from tqdm import tqdm
 
 from src.config import MODEL_PATH, IMG_SIZE, OUTPUT_FEED_DIR, THRESHOLD, ROOT_MODEL_DIR, LATEST_MODEL_PATH
 from src.utils.mpd_utils import resize_pad, nms_numpy
-from src.models.efficient_detector_multi_placa import GRID_SIZE, NUM_ANCHORS, NUM_CLASSES, yolo_ciou_loss
-import numpy as np
+from src.models.efficient_detector_multi_placa import NUM_CLASSES, yolo_ciou_loss
 
-# ... (otras configuraciones de directorio - SIN CAMBIOS) ...
-
-# =======================================================================
-# 1. FUNCIÓN DE DECODIFICACIÓN Y POST-PROCESAMIENTO
-# =======================================================================
 
 def process_predictions(output_tensor, img_size=IMG_SIZE[0], confidence_threshold=THRESHOLD):
-    """
-    Decodifica la salida (7, 7, 16) del modelo, filtra por umbral de confianza 
-    y retorna BBoxes normalizados.
-    """
-    
-    final_boxes_norm = [] # [xmin, ymin, xmax, ymax] normalizado a [0, 1] del frame padded
-    final_scores = []
-    
-    # Reducir el tensor si viene con batch dim: (1, G, G, C) -> (G, G, C)
     arr = np.asarray(output_tensor)
     if arr.ndim == 4 and arr.shape[0] == 1:
         arr = arr[0]
-
     gh, gw, channels = arr.shape[:3]
     per_anchor = 5 + NUM_CLASSES
     anchors = int(channels // per_anchor)
     arr = arr.reshape(gh, gw, anchors, per_anchor)
-
+    final_boxes_norm = []
+    final_scores = []
     for i in range(gh):
         for j in range(gw):
             for a in range(anchors):
@@ -44,35 +35,22 @@ def process_predictions(output_tensor, img_size=IMG_SIZE[0], confidence_threshol
                 confidence = float(cell[0])
                 if confidence < confidence_threshold:
                     continue
-                cx_local = float(cell[1])
-                cy_local = float(cell[2])
-                w_norm = float(cell[3])
-                h_norm = float(cell[4])
-
-                cx_norm = (j + cx_local) / gh
-                cy_norm = (i + cy_local) / gh
-
-                xmin_norm = cx_norm - (w_norm / 2)
-                ymin_norm = cy_norm - (h_norm / 2)
-                xmax_norm = cx_norm + (w_norm / 2)
-                ymax_norm = cy_norm + (h_norm / 2)
-
+                cx_local = float(cell[1]); cy_local = float(cell[2])
+                w_norm = float(cell[3]); h_norm = float(cell[4])
+                cx_norm = (j + cx_local) / gh; cy_norm = (i + cy_local) / gh
+                xmin_norm = cx_norm - (w_norm / 2); ymin_norm = cy_norm - (h_norm / 2)
+                xmax_norm = cx_norm + (w_norm / 2); ymax_norm = cy_norm + (h_norm / 2)
                 final_boxes_norm.append([xmin_norm, ymin_norm, xmax_norm, ymax_norm])
                 final_scores.append(confidence)
-
-    # Aplicar NMS para eliminar duplicados cercanos
     if len(final_boxes_norm) > 0:
-        selected = nms_numpy(final_boxes_norm, final_scores, iou_thresh=0.45, score_thresh=0.2)
+        selected = nms_numpy(final_boxes_norm, final_scores, iou_thresh=0.45, score_thresh=0.0)
         final_boxes = [final_boxes_norm[i] for i in selected]
         final_scores = [final_scores[i] for i in selected]
     else:
         final_boxes = []
-
+        final_scores = []
     return final_boxes, final_scores
 
-# =======================================================================
-# 2. CARGA DEL MODELO (Añadir custom_objects)
-# =======================================================================
 
 def find_latest_model_in_models_dir():
     if not os.path.isdir(ROOT_MODEL_DIR):
@@ -102,7 +80,6 @@ def load_model_safe(model_path=None):
     auto = find_latest_model_in_models_dir()
     if auto:
         candidates.append(auto)
-
     last_err = None
     for p in candidates:
         if not p:
@@ -118,79 +95,200 @@ def load_model_safe(model_path=None):
             print(f"Intento de carga falló para {p}: {e}")
     raise FileNotFoundError(f"No se encontró modelo válido. Intentos: {candidates}. Ultimo error: {last_err}")
 
-# =======================================================================
-# 3. FUNCIÓN PRINCIPAL DE PROCESAMIENTO (process_video)
-# =======================================================================
 
-def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], display=False):
-    # ... (Carga de video, FPS, width, height, writer - SIN CAMBIOS) ...
+def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], display=False, max_missed=5):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise FileNotFoundError(f"No se pudo abrir el video: {video_path}")
-
     fps = cap.get(cv2.CAP_PROP_FPS) if cap.get(cv2.CAP_PROP_FPS) > 0 else 25
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    # ... (Definición de out_video_path, fourcc, writer - SIN CAMBIOS) ...
     if out_video_path is None:
         base = os.path.basename(video_path)
-        out_video_path = os.path.join(OUTPUT_FEED_DIR, f"det_{base}")
-
+        ts = datetime.now().strftime('%Y%m%d%H%M%S')
+        out_video_path = os.path.join(OUTPUT_FEED_DIR, f"{ts}_det_{base}")
+    if not out_video_path.lower().endswith('.mp4'):
+        out_video_path = out_video_path + '.mp4'
+    os.makedirs(OUTPUT_FEED_DIR, exist_ok=True)
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(out_video_path, fourcc, fps, (width, height))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    pbar = tqdm(total=total_frames, desc="Procesando frames")
-    
+    pbar = tqdm(total=total_frames if total_frames > 0 else None, desc="Procesando frames")
+
+    saver_q = queue.Queue()
+    stop_token = object()
+    metadata_csv = os.path.join(OUTPUT_FEED_DIR, 'video_saved_metadata.csv')
+    if not os.path.exists(metadata_csv):
+        with open(metadata_csv, 'w', newline='') as cf:
+            writer_csv = csv.writer(cf)
+            writer_csv.writerow(['track_id', 'filepath', 'score', 'timestamp', 'video_path', 'bbox_x1', 'bbox_y1', 'bbox_x2', 'bbox_y2'])
+
+    def saver_worker(q, csv_path):
+        rows = {}
+        if os.path.exists(csv_path):
+            try:
+                with open(csv_path, 'r', newline='') as cf:
+                    reader = csv.DictReader(cf)
+                    for r in reader:
+                        tid = r.get('track_id', '')
+                        rows[tid] = r
+            except Exception:
+                rows = {}
+
+        while True:
+            job = q.get()
+            if job is stop_token:
+                q.task_done()
+                break
+            try:
+                if job.get('type') == 'image':
+                    saved = False
+                    try:
+                        saved = cv2.imwrite(job['path'], job['image'])
+                    except Exception as e:
+                        print('cv2.imwrite error:', e)
+                        saved = False
+
+                    if saved:
+                        tid = str(job.get('track_id', ''))
+                        rows[tid] = {
+                            'track_id': tid,
+                            'filepath': job['path'],
+                            'score': str(job.get('score', '')),
+                            'timestamp': job.get('timestamp', ''),
+                            'video_path': job.get('video_path', ''),
+                            'bbox_x1': str(job.get('bbox', ['', '', '', ''])[0]),
+                            'bbox_y1': str(job.get('bbox', ['', '', '', ''])[1]),
+                            'bbox_x2': str(job.get('bbox', ['', '', '', ''])[2]),
+                            'bbox_y2': str(job.get('bbox', ['', '', '', ''])[3])
+                        }
+                        try:
+                            with open(csv_path, 'w', newline='') as cf:
+                                fieldnames = ['track_id', 'filepath', 'score', 'timestamp', 'video_path', 'bbox_x1', 'bbox_y1', 'bbox_x2', 'bbox_y2']
+                                writer_csv = csv.DictWriter(cf, fieldnames=fieldnames)
+                                writer_csv.writeheader()
+                                for _, r in rows.items():
+                                    writer_csv.writerow(r)
+                        except Exception as e:
+                            print('Error escribiendo CSV:', e)
+            except Exception as e:
+                print('Saver thread error:', e)
+            finally:
+                q.task_done()
+
+    saver_thread = threading.Thread(target=saver_worker, args=(saver_q, metadata_csv), daemon=True)
+    saver_thread.start()
+
+    tracks = []
+    next_track_id = 1
+
+    def iou(a, b):
+        xA = max(a[0], b[0])
+        yA = max(a[1], b[1])
+        xB = min(a[2], b[2])
+        yB = min(a[3], b[3])
+        interW = max(0, xB - xA)
+        interH = max(0, yB - yA)
+        interArea = interW * interH
+        boxAArea = max(0, a[2] - a[0]) * max(0, a[3] - a[1])
+        boxBArea = max(0, b[2] - b[0]) * max(0, b[3] - b[1])
+        denom = boxAArea + boxBArea - interArea
+        return interArea / denom if denom > 0 else 0.0
+
+    if display:
+        try:
+            cv2.namedWindow('Detección', cv2.WINDOW_NORMAL)
+            max_w = min(1280, width)
+            max_h = min(720, height)
+            cv2.resizeWindow('Detección', max_w, max_h)
+        except Exception:
+            pass
+
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        
-        # 1. Preprocesamiento (Resize + Pad)
         img_pad, scale, top, left = resize_pad(rgb, img_size)
         inp = (img_pad.astype(np.float32) / 255.0)[None, ...]
-
-        # 2. Predicción (Salida: 1, 7, 7, 16)
         pred_tensor = model.predict(inp)
-        
-        # 3. Decodificación y Filtrado por Umbral
-        boxes_norm_padded, scores = process_predictions(pred_tensor, img_size=img_size)
+        boxes_norm, scores = process_predictions(pred_tensor, img_size=img_size)
 
         out_frame = frame.copy()
-
-        # 4. Iterar sobre las cajas detectadas y dibujar
-        for box_norm, score in zip(boxes_norm_padded, scores):
-            
-            # BBox normalizado [0, 1] -> BBox en píxeles del frame padded
+        detections = []
+        for box_norm, score in zip(boxes_norm, scores):
             x1_p = int(box_norm[0] * img_size)
             y1_p = int(box_norm[1] * img_size)
             x2_p = int(box_norm[2] * img_size)
             y2_p = int(box_norm[3] * img_size)
-
-            # Mapear de padded -> original
             x1_orig = int(max(0, (x1_p - left) / scale))
             y1_orig = int(max(0, (y1_p - top) / scale))
             x2_orig = int(min(width, (x2_p - left) / scale))
             y2_orig = int(min(height, (y2_p - top) / scale))
+            detections.append({'bbox': [x1_orig, y1_orig, x2_orig, y2_orig], 'score': score})
 
-            # Dibujar BBox (Solo las que pasaron el umbral)
-            cv2.rectangle(out_frame, (x1_orig, y1_orig), (x2_orig, y2_orig), (0, 255, 0), 2)
-            
-                # Dibujar Etiqueta y Confianza (mostrar %)
-            label = f"Placa: {score*100:.0f}%"
-            cv2.putText(out_frame, label, (x1_orig, max(0, y1_orig - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        matched_track_ids = set()
+        new_tracks = []
 
+        for det in detections:
+            best_tid = None
+            best_iou = 0.0
+            for t in tracks:
+                if t['id'] in matched_track_ids:
+                    continue
+                i = iou(det['bbox'], t['bbox'])
+                if i > best_iou:
+                    best_iou = i
+                    best_tid = t['id']
+            if best_tid is not None and best_iou >= 0.4:
+                for t in tracks:
+                    if t['id'] == best_tid:
+                        t['bbox'] = det['bbox']
+                        t['missed'] = 0
+                        if det['score'] > t.get('best_score', 0) and det['score'] >= THRESHOLD:
+                            t['best_score'] = det['score']
+                            fname = os.path.basename(video_path)
+                            img_name = f"det_{fname}_track{t['id']}.jpg"
+                            img_path = os.path.join(OUTPUT_FEED_DIR, img_name)
+                            full = out_frame.copy()
+                            bx = det['bbox']
+                            cv2.rectangle(full, (bx[0], bx[1]), (bx[2], bx[3]), (0, 255, 0), 2)
+                            saver_q.put({'type': 'image', 'path': img_path, 'image': full, 'track_id': t['id'], 'score': t['best_score'], 'timestamp': datetime.now().isoformat(), 'video_path': out_video_path, 'bbox': bx})
+                        new_tracks.append(t)
+                        matched_track_ids.add(t['id'])
+                        break
+            else:
+                tnew = {'id': next_track_id, 'bbox': det['bbox'], 'best_score': det['score'], 'missed': 0}
+                next_track_id += 1
+                if tnew['best_score'] >= THRESHOLD:
+                    fname = os.path.basename(video_path)
+                    img_name = f"det_{fname}_track{tnew['id']}.jpg"
+                    img_path = os.path.join(OUTPUT_FEED_DIR, img_name)
+                    full = out_frame.copy()
+                    bx = det['bbox']
+                    cv2.rectangle(full, (bx[0], bx[1]), (bx[2], bx[3]), (0, 255, 0), 2)
+                    saver_q.put({'type': 'image', 'path': img_path, 'image': full, 'track_id': tnew['id'], 'score': tnew['best_score'], 'timestamp': datetime.now().isoformat(), 'video_path': out_video_path, 'bbox': bx})
+                new_tracks.append(tnew)
 
-        # ... (Escritura y display - SIN CAMBIOS) ...
+        for t in tracks:
+            if t['id'] not in matched_track_ids:
+                t['missed'] = t.get('missed', 0) + 1
+                if t['missed'] <= max_missed:
+                    new_tracks.append(t)
+        tracks = [t for t in new_tracks if t.get('missed', 0) <= max_missed]
+
+        for t in tracks:
+            bx = t['bbox']
+            cv2.rectangle(out_frame, (bx[0], bx[1]), (bx[2], bx[3]), (0, 255, 0), 2)
+            label = f"Placa: {t.get('best_score', 0)*100:.0f}%"
+            cv2.putText(out_frame, label, (bx[0], max(0, bx[1] - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
         writer.write(out_frame)
         if display:
             cv2.imshow("Detección", out_frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
-
         pbar.update(1)
 
     cap.release()
@@ -198,9 +296,11 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
     pbar.close()
     if display:
         cv2.destroyAllWindows()
-
+    saver_q.put(stop_token)
+    saver_thread.join(timeout=5)
     print(f"Video de salida guardado en: {out_video_path}")
     return out_video_path
+
 
 def main():
     parser = argparse.ArgumentParser(description="Inferir un video con detector de placas")
@@ -209,10 +309,10 @@ def main():
     parser.add_argument("--out", default=None, help="Ruta de salida mp4 opcional")
     parser.add_argument("--display", action="store_true", help="Mostrar video en pantalla")
     args = parser.parse_args()
-
     model = load_model_safe(args.model)
-    out = process_video(model, args.video, out_video_path=args.out, display=args.display)
+    out = process_video(model, args.video, out_video_path=args.out, img_size=IMG_SIZE[0], display=args.display)
     print("Hecho.")
+
 
 if __name__ == "__main__":
     main()
