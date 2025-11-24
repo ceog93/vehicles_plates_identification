@@ -86,7 +86,7 @@ IMG_SIZE = (416, 416) # Tamaño de las imágenes de entrada para el modelo
 BATCH_SIZE = 8 # Tamaño del lote para el entrenamiento (segun capacidad de memoria de la GPU o CPU)
 EPOCHS = 200 # Número de épocas (iteraciones completas sobre el conjunto de datos) para el entrenamiento
 LEARNING_RATE = 1e-4 # 0.001 # Tasa de aprendizaje para el optimizador
-THRESHOLD = 0.7 # Umbral de predicción
+THRESHOLD = 0.45 # Umbral de predicción (temporalmente reducido para diagnóstico)
 # ============================= OTROS =============================
 # Semilla aleatoria para reproducibilidad
 RANDOM_SEED = 42

@@ -122,7 +122,10 @@ def main():
                 print(f"Procesando video: {f} (se guardará en {out_dir} con timestamp)")
                 try:
                     # dejar que process_video cree el nombre del video con timestamp y mostrar en tiempo real
-                    process_video(model, f, out_video_path=None, display=True)
+                    # Parámetros: aspect_ratio_min relajado para aceptar placas, confirm_frames para estabilidad
+                    process_video(model, f, out_video_path=None, display=True,
+                                  confirm_frames=3, iou_thresh=0.45, min_area=1500,
+                                  aspect_ratio_min=1.0, aspect_ratio_max=10.0)
                 except Exception as e:
                     print('Error procesando', f, e)
 
@@ -147,7 +150,7 @@ def main():
                 cam_index = cams[0]
             # Guardado automático: guardar video y frames con confianza >= 90%
             save = True
-            run_webcam(model, cam_index=cam_index, save_output=save, save_video=True, save_high_conf=True, high_conf_thresh=0.9)
+            run_webcam(model, cam_index=cam_index, save_output=save, save_video=True, save_high_conf=True, high_conf_thresh=1.0)
             input('Presione enter para continuar...')
             main()
         else:

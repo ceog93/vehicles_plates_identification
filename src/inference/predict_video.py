@@ -37,7 +37,9 @@ def process_predictions(output_tensor, img_size=IMG_SIZE[0], confidence_threshol
                     continue
                 cx_local = float(cell[1]); cy_local = float(cell[2])
                 w_norm = float(cell[3]); h_norm = float(cell[4])
-                cx_norm = (j + cx_local) / gh; cy_norm = (i + cy_local) / gh
+                # Normalizar coordenadas: usar `gw` (grid width) para X y `gh` (grid height) para Y
+                cx_norm = (j + cx_local) / gw
+                cy_norm = (i + cy_local) / gh
                 xmin_norm = cx_norm - (w_norm / 2); ymin_norm = cy_norm - (h_norm / 2)
                 xmax_norm = cx_norm + (w_norm / 2); ymax_norm = cy_norm + (h_norm / 2)
                 final_boxes_norm.append([xmin_norm, ymin_norm, xmax_norm, ymax_norm])
@@ -96,7 +98,9 @@ def load_model_safe(model_path=None):
     raise FileNotFoundError(f"No se encontró modelo válido. Intentos: {candidates}. Ultimo error: {last_err}")
 
 
-def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], display=False, max_missed=5):
+def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], display=False,
+                  max_missed=5, iou_thresh=0.45, confirm_frames=3, min_area=1500,
+                  aspect_ratio_min=2.0, aspect_ratio_max=6.0):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise FileNotFoundError(f"No se pudo abrir el video: {video_path}")
@@ -226,6 +230,18 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
             y1_orig = int(max(0, (y1_p - top) / scale))
             x2_orig = int(min(width, (x2_p - left) / scale))
             y2_orig = int(min(height, (y2_p - top) / scale))
+            w = max(1, x2_orig - x1_orig)
+            h = max(1, y2_orig - y1_orig)
+            area = w * h
+            aspect = float(w) / float(h)
+            # Filtrar detecciones por tamaño y aspecto para reducir falsos positivos (faros/llantas)
+            valid_shape = True
+            if area < min_area:
+                valid_shape = False
+            if aspect < aspect_ratio_min or aspect > aspect_ratio_max:
+                valid_shape = False
+            if not valid_shape:
+                continue
             detections.append({'bbox': [x1_orig, y1_orig, x2_orig, y2_orig], 'score': score})
 
         matched_track_ids = set()
@@ -241,12 +257,31 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
                 if i > best_iou:
                     best_iou = i
                     best_tid = t['id']
-            if best_tid is not None and best_iou >= 0.4:
+            if best_tid is not None and best_iou >= iou_thresh:
                 for t in tracks:
                     if t['id'] == best_tid:
                         t['bbox'] = det['bbox']
                         t['missed'] = 0
-                        if det['score'] > t.get('best_score', 0) and det['score'] >= THRESHOLD:
+                        # Actualizar consec/confirmación para estabilidad temporal
+                        if det['score'] >= THRESHOLD:
+                            t['consec'] = t.get('consec', 0) + 1
+                        else:
+                            t['consec'] = 0
+                        if det['score'] > t.get('best_score', 0):
+                            t['best_score'] = det['score']
+                        # Confirmar track solo después de N frames consecutivos
+                        if not t.get('confirmed', False) and t.get('consec', 0) >= confirm_frames:
+                            t['confirmed'] = True
+                            # guardar imagen inicial al confirmarse
+                            fname = os.path.basename(video_path)
+                            img_name = f"det_{fname}_track{t['id']}.jpg"
+                            img_path = os.path.join(OUTPUT_FEED_DIR, img_name)
+                            full = out_frame.copy()
+                            bx = det['bbox']
+                            cv2.rectangle(full, (bx[0], bx[1]), (bx[2], bx[3]), (0, 255, 0), 2)
+                            saver_q.put({'type': 'image', 'path': img_path, 'image': full, 'track_id': t['id'], 'score': t['best_score'], 'timestamp': datetime.now().isoformat(), 'video_path': out_video_path, 'bbox': bx})
+                        # Si ya confirmado y mejora score, sobrescribir imagen
+                        elif t.get('confirmed', False) and det['score'] > t.get('best_score', 0):
                             t['best_score'] = det['score']
                             fname = os.path.basename(video_path)
                             img_name = f"det_{fname}_track{t['id']}.jpg"
@@ -259,9 +294,14 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
                         matched_track_ids.add(t['id'])
                         break
             else:
-                tnew = {'id': next_track_id, 'bbox': det['bbox'], 'best_score': det['score'], 'missed': 0}
+                tnew = {'id': next_track_id, 'bbox': det['bbox'], 'best_score': det['score'], 'missed': 0, 'consec': 0, 'confirmed': False}
                 next_track_id += 1
+                # iniciar consec si supera THRESHOLD
                 if tnew['best_score'] >= THRESHOLD:
+                    tnew['consec'] = 1
+                # confirmar y guardar solo si alcanza consecutividad
+                if tnew['consec'] >= confirm_frames:
+                    tnew['confirmed'] = True
                     fname = os.path.basename(video_path)
                     img_name = f"det_{fname}_track{tnew['id']}.jpg"
                     img_path = os.path.join(OUTPUT_FEED_DIR, img_name)
@@ -308,9 +348,27 @@ def main():
     parser.add_argument("--model", default=MODEL_PATH, help="Ruta al modelo Keras")
     parser.add_argument("--out", default=None, help="Ruta de salida mp4 opcional")
     parser.add_argument("--display", action="store_true", help="Mostrar video en pantalla")
+    parser.add_argument("--confirm_frames", type=int, default=3, help="Frames consecutivos necesarios para confirmar un track")
+    parser.add_argument("--iou_thresh", type=float, default=0.45, help="Umbral IoU para emparejar detecciones con tracks")
+    parser.add_argument("--min_area", type=int, default=1500, help="Área mínima en píxeles para aceptar una detección")
+    parser.add_argument("--aspect_ratio_min", type=float, default=2.0, help="Relación de aspecto mínima (w/h) para aceptar detecciones")
+    parser.add_argument("--aspect_ratio_max", type=float, default=6.0, help="Relación de aspecto máxima (w/h) para aceptar detecciones")
+    parser.add_argument("--max_missed", type=int, default=5, help="Máximo de frames perdidos antes de eliminar un track")
     args = parser.parse_args()
     model = load_model_safe(args.model)
-    out = process_video(model, args.video, out_video_path=args.out, img_size=IMG_SIZE[0], display=args.display)
+    out = process_video(
+        model,
+        args.video,
+        out_video_path=args.out,
+        img_size=IMG_SIZE[0],
+        display=args.display,
+        max_missed=args.max_missed,
+        iou_thresh=args.iou_thresh,
+        confirm_frames=args.confirm_frames,
+        min_area=args.min_area,
+        aspect_ratio_min=args.aspect_ratio_min,
+        aspect_ratio_max=args.aspect_ratio_max,
+    )
     print("Hecho.")
 
 
