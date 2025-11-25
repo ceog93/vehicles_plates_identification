@@ -17,9 +17,15 @@ def check_gpu_status():
     gpus = tf.config.experimental.list_physical_devices('GPU')
     
     if gpus:
-        print(f"✅ Éxito: {len(gpus)} GPU(s) detectada(s) por TensorFlow.")
-        print(f"Versión de TensorFlow: {tf.__version__}")
-        print(f"Dispositivo(s) encontrado(s): {gpus}")
+        print(f"*******************************************************************")
+        print(f"-----------------PRUEBA DE DETECCIÓN DE GPU -----------------------")
+        print(f"*******************************************************************")
+        print(f"        ✅ Éxito: {len(gpus)} GPU(s) detectada(s) por TensorFlow.")
+        print(f"        Dispositivo(s) encontrado(s): {gpus}")
+        print(f"*******************************************************************")
+        print(f"        Versión de TensorFlow: {tf.__version__}\n")
+        print(f"*******************************************************************")
+        
         
         try:
             # 2. Configurar el primer dispositivo GPU para su uso
@@ -30,19 +36,30 @@ def check_gpu_status():
                 a = tf.constant([[1.0, 2.0], [3.0, 4.0]])
                 b = tf.constant([[1.0, 1.0], [0.0, 1.0]])
                 c = tf.matmul(a, b)
-            
-            print(f"🧠 Operación Matriz (tf.matmul) realizada en /GPU:0.")
-            print(f"Resultado de prueba: {c.numpy()}")
-            print("--- La GPU está correctamente configurada y operativa para el trabajo. ---")
+            print(f"\n-------------------------------------------------------------------")
+            print(f"-----------------PRUEBA DE OPERACIÓN EN GPU -----------------------")
+            print(f"-------------------------------------------------------------------")
+            print(f"        🧠 Operación Matriz (tf.matmul) realizada en /GPU:0.")
+            print(f"        Resultado de prueba: {c.numpy()}")
+            print("         --- La GPU está correctamente configurada y operativa para el trabajo. ---")
+            print(f"-------------------------------------------------------------------")
             return True
             
         except RuntimeError as e:
             # Esto maneja errores de inicialización o configuración después de la detección
-            print(f"❌ Error al inicializar o usar la GPU (CUDA/cuDNN): {e}")
+            print(f"-------------------------------------------------------------------")
+            print(f"-----------------ERROR DURANTE PRUEBA EN GPU ---------------------")
+            print(f"-------------------------------------------------------------------")
+            print(f"        ❌ Error al inicializar o usar la GPU (CUDA/cuDNN): {e}")
+            print(f"-------------------------------------------------------------------")
             return False
             
     else:
-        print("❌ Falla: No se detectaron GPUs. Las operaciones usarán la CPU.")
+        print(f"-------------------------------------------------------------------")
+        print(f"-----------------PRUEBA DE DETECCIÓN DE GPU -----------------------")
+        print(f"-------------------------------------------------------------------")
+        print("         ❌ Falla: No se detectaron GPUs. Las operaciones usarán la CPU.")
+        print(f"-------------------------------------------------------------------")
         return False
     
     print("-" * 50)
@@ -51,4 +68,8 @@ if __name__ == "__main__":
     # Esto permite ejecutar el script directamente para una prueba rápida
     gpu_available = check_gpu_status()
     if not gpu_available:
-        print("\nRevisa tu instalación de WSL2, Drivers de NVIDIA, CUDA Toolkit y cuDNN.")
+        print(f"-------------------------------------------------------------------")
+        print(f"-----------------GPU NO DISPONIBLE O NO FUNCIONAL -----------------")
+        print(f"-------------------------------------------------------------------")
+        print("     \nRevisa tu instalación de WSL2, Drivers de NVIDIA, CUDA Toolkit y cuDNN.")
+        print(f"-------------------------------------------------------------------")
