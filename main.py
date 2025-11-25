@@ -13,10 +13,8 @@ from time import sleep
 
 # inferencia
 from src.inference.predict_image import infer_image
-from src.inference.predict_video import (
-    process_video as run_video_detection,
-    load_model_safe,
-)
+from src.inference.predict_video import process_video, load_model_safe
+
 from src.inference.predict_webcam import run_webcam
 
 from src.config import INPUT_FEED_DIR, OUTPUT_FEED_DIR
@@ -151,8 +149,9 @@ def main():
                 for vid in files:
                     print(f"Procesando video (OCR colombiano multiplaca): {vid}")                    
                     try:
-                        run_video_detection(
-                            model=model,                            video_path=vid, 
+                        process_video(
+                            model=model,                            
+                            video_path=vid, 
                             out_video_path=None, 
                             display=True, 
                             iou_thresh=0.30, 
