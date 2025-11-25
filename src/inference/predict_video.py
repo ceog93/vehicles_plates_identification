@@ -168,15 +168,22 @@ def run_ocr(cropped_img):
 
 # --- Función Principal de Procesamiento ---
 def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], display=False,
-                  # 🔥 AJUSTES PARA MAYOR ESTABILIDAD DEL TRACKING Y OCR 🔥
-                  max_missed=10, iou_thresh=0.30, confirm_frames=1, min_area=800,
+                  # 🔥 PARÁMETROS DE TRACKING REAJUSTADOS PARA MAYOR ESTABILIDAD Y CALIDAD 🔥
+                  # Se reduce para eliminar tracks perdidos más rápido, evitando saltos.
+                  max_missed=5, 
+                  # Se aumenta para que una detección tenga que solaparse MÁS con el track anterior para ser considerada la misma.
+                  iou_thresh=0.45, 
+                  # Se aumenta a 3 para forzar una consistencia de 3 frames antes de "confirmar" y guardar, dando tiempo a que la detección se estabilice en el mejor frame.
+                  confirm_frames=3, 
+                  min_area=800,
                   aspect_ratio_min=1.8, aspect_ratio_max=8.0,
-                  dampening_factor=0.75, 
+                  # Se aumenta el factor de amortiguación (dampening) para suavizar más los saltos rápidos del BBox.
+                  dampening_factor=0.85, 
                   ocr_padding_ratio=0.1 
                   ):
 
     # ----------------------------------------------------
-    # 1. INICIALIZACIÓN Y CONFIGURACIÓN DE CARPETAS (CORREGIDO)
+    # 1. INICIALIZACIÓN Y CONFIGURACIÓN DE CARPETAS
     # ----------------------------------------------------
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -186,15 +193,13 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     
-    # 🔥 A. CREAR CARPETA DE SALIDA ÚNICA CON TIMESTAMP 🔥
+    # Crear carpeta de salida única con timestamp
     ts = datetime.now().strftime('%Y%m%d%H%M%S')
     base = os.path.basename(video_path)
-    
-    # Crear un subdirectorio con el timestamp
     UNIQUE_OUTPUT_DIR = os.path.join(OUTPUT_FEED_DIR, ts)
     os.makedirs(UNIQUE_OUTPUT_DIR, exist_ok=True) 
 
-    # B. El video de salida se guarda dentro de la nueva carpeta
+    # El video de salida se guarda dentro de la nueva carpeta
     out_video_path = os.path.join(UNIQUE_OUTPUT_DIR, f"det_{base}.mp4")
 
     # --- Inicialización de VideoWriter ---
@@ -216,7 +221,7 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
     saver_q = queue.Queue()
     stop_token = object()
     
-    # C. El CSV de metadatos se guarda dentro de la nueva carpeta
+    # El CSV de metadatos se guarda dentro de la nueva carpeta
     metadata_csv = os.path.join(UNIQUE_OUTPUT_DIR, 'video_saved_metadata.csv')
     
     if not os.path.exists(metadata_csv) or os.stat(metadata_csv).st_size == 0:
@@ -225,6 +230,7 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
             writer_csv.writerow(['track_id', 'filepath', 'score', 'ocr_text', 'timestamp', 'video_path', 'bbox_x1', 'bbox_y1', 'bbox_x2', 'bbox_y2'])
 
     def saver_worker(q, csv_path):
+        # Implementación del worker idéntica a la anterior.
         rows = {}
         if os.path.exists(csv_path) and os.stat(csv_path).st_size > 0:
             try:
@@ -322,6 +328,7 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         img_pad, scale, top, left = resize_pad(rgb, img_size)
         inp = (img_pad.astype(np.float32) / 255.0)[None, ...]
+        # La predicción con un batch de 1 funciona para la mayoría de los modelos Keras/TF.
         pred_tensor = model.predict(inp, verbose=0) 
         boxes_norm, scores = process_predictions(pred_tensor, img_size=img_size)
 
@@ -361,20 +368,26 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
                 # Actualizar track existente
                 for t in tracks:
                     if t['id'] == best_tid:
-                        # Aplicar Suavizado
+                        # Aplicar Suavizado (Dampening)
                         prev_bbox = t['bbox']; det_bbox = det['bbox']
                         t['bbox'] = [int(dampening_factor * prev_bbox[i] + (1 - dampening_factor) * det_bbox[i]) for i in range(4)]
                         t['missed'] = 0
                         
-                        if det['score'] >= THRESHOLD: t['consec'] = t.get('consec', 0) + 1
-                        else: t['consec'] = 0
+                        # Incrementar frames consecutivos si la detección es fuerte
+                        if det['score'] >= THRESHOLD: 
+                            t['consec'] = t.get('consec', 0) + 1
+                        else: 
+                            t['consec'] = 0
                             
+                        # Lógica para elegir el MEJOR FRAME (el más nítido/con mayor score)
                         current_best_score = t.get('best_score', 0)
                         
+                        # Si encontramos un score mejor, actualizamos el mejor frame
                         if det['score'] > current_best_score:
                             t['best_score'] = det['score']
                             t['best_frame'] = out_frame.copy() 
                         
+                        # Lógica de confirmación: solo se guarda si es la primera vez que se confirma
                         if not t.get('confirmed', False) and t.get('consec', 0) >= confirm_frames:
                             t['confirmed'] = True
                             
@@ -385,14 +398,19 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
                             x1_p = max(0, x1 - pad_x); y1_p = max(0, y1 - pad_y)
                             x2_p = min(frame.shape[1], x2 + pad_x); y2_p = min(frame.shape[0], y2 + pad_y)
                             cropped_plate = t['best_frame'][y1_p:y2_p, x1_p:x2_p] 
+                            
+                            # Se usa el frame con el mejor score para el OCR
                             ocr_text = run_ocr(cropped_plate)
                             t['ocr_text'] = ocr_text 
-
-                            # 🔥 D. Guardar imagen: YYYYMMDDHHmmss_PLACA.jpg (CORREGIDO) 🔥
-                            name_suffix = ocr_text if ocr_text and not ocr_text.startswith('[OCR') else f"track{t['id']}"
-                            img_name = f"{ts}_{name_suffix}.jpg" # <-- Formato de nombre corregido
+                            
+                            # 🔥 E. Formato de Nombre de Archivo CORREGIDO: YYYYMMDDmmss_track<id>_<placa|none>.jpg 🔥
+                            # Si el OCR devuelve un resultado válido, lo usa; si no, usa "none"
+                            clean_ocr_text = ocr_text.replace('[OCR-', '').replace(']', '') # Ejemplo de limpieza
+                            name_suffix = clean_ocr_text if (clean_ocr_text and not clean_ocr_text.startswith('[OCR')) else "none"
+                            img_name = f"{ts}_track{t['id']}_{name_suffix}.jpg"
                             img_path = os.path.join(UNIQUE_OUTPUT_DIR, img_name)
                             
+                            # Preparar la imagen para guardar (con el BBox final dibujado en el mejor frame)
                             full = t['best_frame'].copy()
                             cv2.rectangle(full, (x1, y1), (x2, y2), (0, 255, 0), 2)
                             
@@ -408,13 +426,14 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
             else:
                 # Crear nuevo track
                 tnew = {'id': next_track_id, 'bbox': det['bbox'], 'best_score': det['score'], 
-                        'missed': 0, 'consec': 0, 'confirmed': False, 'ocr_text': ''}
+                        'missed': 0, 'consec': 0, 'confirmed': False, 'ocr_text': '', 
+                        'best_frame': out_frame.copy()} # Guardar el frame inicial
                 next_track_id += 1
                 
                 if tnew['best_score'] >= THRESHOLD:
                     tnew['consec'] = 1
-                    tnew['best_frame'] = out_frame.copy() 
                     
+                # Lógica de confirmación inmediata si se cumplen los requisitos
                 if tnew['consec'] >= confirm_frames:
                     tnew['confirmed'] = True
                     
@@ -428,11 +447,13 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
                     ocr_text = run_ocr(cropped_plate)
                     tnew['ocr_text'] = ocr_text 
                     
-                    # 🔥 D. Guardar imagen: YYYYMMDDHHmmss_PLACA.jpg (CORREGIDO) 🔥
-                    name_suffix = ocr_text if ocr_text and not ocr_text.startswith('[OCR') else f"track{tnew['id']}"
-                    img_name = f"{ts}_{name_suffix}.jpg" # <-- Formato de nombre corregido
+                    # 🔥 E. Formato de Nombre de Archivo CORREGIDO: YYYYMMDDmmss_track<id>_<placa|none>.jpg 🔥
+                    clean_ocr_text = ocr_text.replace('[OCR-', '').replace(']', '')
+                    name_suffix = clean_ocr_text if (clean_ocr_text and not clean_ocr_text.startswith('[OCR')) else "none"
+                    img_name = f"{ts}_track{tnew['id']}_{name_suffix}.jpg"
                     img_path = os.path.join(UNIQUE_OUTPUT_DIR, img_name)
                     
+                    # Preparar la imagen para guardar
                     full = tnew['best_frame'].copy()
                     cv2.rectangle(full, (x1, y1), (x2, y2), (0, 255, 0), 2)
                     
@@ -453,17 +474,18 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
                     
         tracks = [t for t in new_tracks if t.get('missed', 0) <= max_missed]
 
-        # 🔥 5. DIBUJAR BBOXES Y ETIQUETAS EN EL FRAME DE SALIDA (Asegura visibilidad en el video) 🔥
+        # 5. DIBUJAR BBOXES Y ETIQUETAS EN EL FRAME DE SALIDA
         for t in tracks:
             bx = t['bbox']
+            # Verde para confirmado, Amarillo para nuevo, Naranja para perdido
             color = (0, 255, 0) if t.get('confirmed', False) else (0, 255, 255) 
             if t.get('missed', 0) > 0:
-                color = (0, 165, 255) # Naranja
+                color = (0, 165, 255) 
                 
             cv2.rectangle(out_frame, (bx[0], bx[1]), (bx[2], bx[3]), color, 2)
             
             ocr_text_display = t.get('ocr_text', 'Buscando OCR...')
-            label_top = f"ID:{t['id']} M:{t.get('missed', 0)} S:{t.get('best_score', 0)*100:.0f}%"
+            label_top = f"ID:{t['id']} M:{t.get('missed', 0)} S:{t.get('best_score', 0)*100:.0f}% C:{t.get('consec', 0)}"
             label_ocr = f"OCR: {ocr_text_display}"
             
             cv2.putText(out_frame, label_top, (bx[0], max(0, bx[1] - 18)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
