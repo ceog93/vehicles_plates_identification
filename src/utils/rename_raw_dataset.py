@@ -13,7 +13,7 @@ from src.config import LABELS_DIR as CARPETA_CSV
 # 2. RUTA donde se encuentran los archivos de imagen.
 # Ejemplo: 'data/images' si las imágenes están en BASE_DIR/data/images
 #CARPETA_IMAGENES = os.path.join(BASE_DIR, 'data', 'raw_images')
-from src.config import RAW_DATASET_DIR as CARPETA_IMAGENES
+from src.config import RAW_DATASET_DIR
 # -------------------------- CONFIGURACIÓN DE ARCHIVOS -----------------------
 # 3. Nombre del archivo CSV de entrada
 NOMBRE_CSV = '_raw_data_labels.csv'
@@ -31,7 +31,7 @@ FORMATO_NUEVO_NOMBRE = 'PLACA_{:06d}.jpg'
 
 # ----------------------------------------------------------------------------
 
-def renombrar_y_actualizar_optimizada(csv_path_in = CSV_PATH_IN, img_dir = CARPETA_IMAGENES, col_imagen = COLUMNA_NOMBRE_IMAGEN, formato_nuevo = FORMATO_NUEVO_NOMBRE, csv_path_out = CSV_PATH_OUT):
+def renombrar_y_actualizar_raw_dataset(csv_path_in = CSV_PATH_IN, img_dir = RAW_DATASET_DIR, col_imagen = COLUMNA_NOMBRE_IMAGEN, formato_nuevo = FORMATO_NUEVO_NOMBRE, csv_path_out = CSV_PATH_OUT):
     """
     Lee el CSV desde su ruta, renombra los archivos de imagen en su ruta
     y actualiza TODAS las filas en el CSV con el nuevo nombre, guardándolo 

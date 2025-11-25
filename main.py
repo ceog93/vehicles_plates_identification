@@ -6,6 +6,7 @@ Punto de entrada principal del proyecto
 from src.utils.gpu_checker import check_gpu_status
 from src.utils.preprocess_and_augmentation import preprocess_and_save_data_modular
 from src.utils.view_web_dataset import view_web_dataset
+from src.utils.rename_raw_dataset import renombrar_y_actualizar_raw_dataset
 from src.train import train_model
 from src.config import LATEST_MODEL_PATH
 from time import sleep
@@ -56,7 +57,8 @@ def menu():
     print(" 2. Ver dataset web")
     print(" 3. Entrenar modelo nuevo")
     print(" 4. Inferir (imagen / video / webcam)")
-    print(" 5. Finalizar\n")
+    print(" 5. Utilidades | estandarizar nombres de dataset crudo")
+    print(" 6. Finalizar\n")
 
     option = input("Seleccione opción (1/2/3/4/5): ")
     clean_screen()
@@ -153,13 +155,12 @@ def main():
                             model=model,                            video_path=vid, 
                             out_video_path=None, 
                             display=True, 
-                            iou_thresh=0.30, # Ajustado a los parámetros por defecto de process_video (0.30)
-                            min_area=800,    # Ajustado a los parámetros por defecto de process_video (800)
-                            max_missed=10,   # Ajustado a los parámetros por defecto de process_video (10)
-                            confirm_frames=1, # Ajustado a los parámetros por defecto de process_video (1)
-                            aspect_ratio_min=1.8, # Ajustado a los parámetros por defecto de process_video (1.8)
-                            aspect_ratio_max=8.0, # Ajustado a los parámetros por defecto de process_video (8.0)
-                            # 🔥 NUEVOS PARÁMETROS AGREGADOS 🔥
+                            iou_thresh=0.30, 
+                            min_area=800,    
+                            max_missed=10,   
+                            confirm_frames=1, 
+                            aspect_ratio_min=1.8, 
+                            aspect_ratio_max=8.0, 
                             dampening_factor=0.75,
                             ocr_padding_ratio=0.1
                         )
@@ -197,11 +198,17 @@ def main():
         else:
             print("Opción inválida.")
             return main()
-
+        
     # =======================================================
-    # 5. SALIR
+    # 5. ESTANDARIZAR NOMBRES DE DATASET CRUDO
     # =======================================================
     elif option == "5":
+        renombrar_y_actualizar_raw_dataset()
+        return main()
+    # =======================================================
+    # 6. SALIR
+    # =======================================================
+    elif option == "6":
         print("Hasta luego!")
         exit(0)
 
