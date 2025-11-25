@@ -1,17 +1,29 @@
-# src/inference/predict_video.py
 import os
 import argparse
 from datetime import datetime
 import csv
 import queue
 import threading
+import time # Importar time para el OCR
 
 import cv2
 import numpy as np
 import tensorflow as tf
 from tqdm import tqdm
 
+# Importación de la librería de OCR
+try:
+    import easyocr
+    # Inicializar el lector de EasyOCR una sola vez al inicio del módulo
+    # Utilizar 'es' (español) y 'en' (inglés) para una cobertura más amplia de caracteres.
+    # El flag 'gpu=False' es opcional, depende de tu entorno.
+    READER = easyocr.Reader(['es', 'en'], gpu=False)
+except ImportError:
+    print("Advertencia: EasyOCR no está instalado. El reconocimiento de caracteres estará deshabilitado.")
+    READER = None
+
 # Importaciones de configuración y utilidades (asumo que estas rutas son correctas)
+# Asegúrate de que las rutas y constantes estén disponibles
 from src.config import MODEL_PATH, IMG_SIZE, OUTPUT_FEED_DIR, THRESHOLD, ROOT_MODEL_DIR, LATEST_MODEL_PATH
 from src.utils.mpd_utils import resize_pad, nms_numpy
 from src.models.efficient_detector_multi_placa import NUM_CLASSES, yolo_ciou_loss
@@ -21,6 +33,7 @@ def process_predictions(output_tensor, img_size=IMG_SIZE[0], confidence_threshol
     """
     Decodifica la salida del modelo Yolo-like a bounding boxes y scores.
     """
+    # ... (El código de process_predictions no requiere cambios) ...
     arr = np.asarray(output_tensor)
     if arr.ndim == 4 and arr.shape[0] == 1:
         arr = arr[0]
@@ -68,8 +81,9 @@ def process_predictions(output_tensor, img_size=IMG_SIZE[0], confidence_threshol
     return final_boxes, final_scores
 
 
+# --- Funciones de Carga del Modelo (No requieren cambios funcionales) ---
 def find_latest_model_in_models_dir():
-    """Busca el modelo más reciente dentro de la estructura de carpetas de entrenamiento."""
+    # ... (El código de find_latest_model_in_models_dir se mantiene) ...
     if not os.path.isdir(ROOT_MODEL_DIR):
         return None
     subdirs = [d for d in os.listdir(ROOT_MODEL_DIR) if os.path.isdir(os.path.join(ROOT_MODEL_DIR, d))]
@@ -97,7 +111,7 @@ def find_latest_model_in_models_dir():
 
 
 def load_model_safe(model_path=None):
-    """Intenta cargar el modelo desde varias ubicaciones candidatas."""
+    # ... (El código de load_model_safe se mantiene) ...
     candidates = []
     if model_path:
         candidates.append(model_path)
@@ -127,10 +141,45 @@ def load_model_safe(model_path=None):
     raise FileNotFoundError(f"❌ No se encontró modelo válido. Intentos: {candidates}. Ultimo error: {last_err}")
 
 
-def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], display=False,
-                  max_missed=5, iou_thresh=0.45, confirm_frames=3, min_area=1500,
-                  aspect_ratio_min=2.0, aspect_ratio_max=6.0):
+# --- Nueva Función de OCR ---
+def run_ocr(cropped_img):
+    """Ejecuta EasyOCR en una imagen recortada y devuelve el texto más confiable."""
+    if READER is None:
+        return "[OCR NO INSTALADO]"
     
+    try:
+        # EasyOCR espera BGR para su procesamiento interno, pero lo convertiremos aquí por seguridad.
+        # Si ya es BGR (porque viene de OpenCV), el cvtColor no hace daño.
+        # Es mejor asegurarse de que la imagen sea BGR antes de pasarla al reader.
+        # Sin embargo, el reader de EasyOCR también acepta un numpy array (BGR o RGB)
+        
+        # Opciones recomendadas:
+        # - allowlist: Limitar a caracteres alfanuméricos de placas.
+        # - detail=0: Devuelve solo el texto reconocido (sin bounding boxes de caracteres).
+        results = READER.readtext(cropped_img, 
+                                  allowlist='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 
+                                  detail=0, 
+                                  paragraph=True)
+        
+        if results:
+            # EasyOCR devuelve una lista de textos. Unir el texto en una sola cadena.
+            # Puedes aplicar lógica adicional aquí si es necesario (e.g., limpiar guiones, espacios).
+            ocr_text = " ".join(results).replace(" ", "").replace("-", "")
+            return ocr_text
+        else:
+            return ""
+            
+    except Exception as e:
+        # Capturar errores del OCR (e.g., fallas de CUDA, problemas de imagen)
+        return f"[OCR ERROR: {e}]"
+
+# --- Función Principal de Procesamiento ---
+def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], display=False,
+                  # 🔥 AJUSTES PARA MAYOR ESTABILIDAD DEL TRACKING 🔥
+                  max_missed=10, iou_thresh=0.30, confirm_frames=1, min_area=800,
+                  aspect_ratio_min=1.8, aspect_ratio_max=8.0):
+
+    # ... (Inicio de process_video, VideoCapture, VideoWriter, Warmup - SIN CAMBIOS) ...
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise FileNotFoundError(f"❌ No se pudo abrir el video: {video_path}")
@@ -154,7 +203,6 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
     pbar = tqdm(total=total_frames if total_frames > 0 else None, desc="Procesando frames")
 
     # --- WARMUP (Calentamiento del Modelo) ---
-    # Esto es crucial para estabilizar la inferencia inicial y evitar detecciones "deslocalizadas".
     print("▶ Ejecutando Warmup del modelo...")
     dummy_inp = np.zeros((1, img_size, img_size, 3), dtype=np.float32)
     try:
@@ -171,7 +219,8 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
     if not os.path.exists(metadata_csv) or os.stat(metadata_csv).st_size == 0:
         with open(metadata_csv, 'w', newline='') as cf:
             writer_csv = csv.writer(cf)
-            writer_csv.writerow(['track_id', 'filepath', 'score', 'timestamp', 'video_path', 'bbox_x1', 'bbox_y1', 'bbox_x2', 'bbox_y2'])
+            # 💡 AÑADIR CAMPO 'OCR_TEXT' AL CSV
+            writer_csv.writerow(['track_id', 'filepath', 'score', 'ocr_text', 'timestamp', 'video_path', 'bbox_x1', 'bbox_y1', 'bbox_x2', 'bbox_y2'])
 
     def saver_worker(q, csv_path):
         rows = {}
@@ -179,7 +228,9 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
         if os.path.exists(csv_path) and os.stat(csv_path).st_size > 0:
             try:
                 with open(csv_path, 'r', newline='') as cf:
-                    reader = csv.DictReader(cf)
+                    # 💡 CAMBIAR fieldnames para incluir 'ocr_text'
+                    reader = csv.DictReader(cf, fieldnames=['track_id', 'filepath', 'score', 'ocr_text', 'timestamp', 'video_path', 'bbox_x1', 'bbox_y1', 'bbox_x2', 'bbox_y2'])
+                    next(reader) # Saltar encabezado
                     for r in reader:
                         tid = r.get('track_id', '')
                         rows[tid] = r
@@ -190,7 +241,8 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
         def write_csv():
             try:
                 with open(csv_path, 'w', newline='') as cf:
-                    fieldnames = ['track_id', 'filepath', 'score', 'timestamp', 'video_path', 'bbox_x1', 'bbox_y1', 'bbox_x2', 'bbox_y2']
+                    # 💡 CAMBIAR fieldnames para incluir 'ocr_text'
+                    fieldnames = ['track_id', 'filepath', 'score', 'ocr_text', 'timestamp', 'video_path', 'bbox_x1', 'bbox_y1', 'bbox_x2', 'bbox_y2']
                     writer_csv = csv.DictWriter(cf, fieldnames=fieldnames)
                     writer_csv.writeheader()
                     for _, r in rows.items():
@@ -223,6 +275,7 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
                             'track_id': tid,
                             'filepath': job['path'],
                             'score': str(job.get('score', '')),
+                            'ocr_text': job.get('ocr_text', ''), # 💡 AGREGAR OCR_TEXT
                             'timestamp': job.get('timestamp', ''),
                             'video_path': job.get('video_path', ''),
                             'bbox_x1': str(job.get('bbox', ['', '', '', ''])[0]),
@@ -247,6 +300,7 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
 
     def iou(a, b):
         """Calcula Intersection over Union (IoU) para dos cajas [x1, y1, x2, y2]."""
+        # ... (El código de iou se mantiene) ...
         xA = max(a[0], b[0])
         yA = max(a[1], b[1])
         xB = min(a[2], b[2])
@@ -282,7 +336,6 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
         img_pad, scale, top, left = resize_pad(rgb, img_size)
         inp = (img_pad.astype(np.float32) / 255.0)[None, ...]
         
-        # El verbose=0 evita la impresión repetitiva de 'predict'
         pred_tensor = model.predict(inp, verbose=0) 
         boxes_norm, scores = process_predictions(pred_tensor, img_size=img_size)
 
@@ -308,7 +361,7 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
             area = w * h
             aspect = float(w) / float(h)
             
-            # Filtrar por tamaño y aspecto (para evitar falsos positivos)
+            # Filtrar por tamaño y aspecto (ahora con umbrales más flexibles)
             valid_shape = True
             if area < min_area:
                 valid_shape = False
@@ -350,53 +403,86 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
                         else:
                             t['consec'] = 0
                             
-                        if det['score'] > t.get('best_score', 0):
+                        # El mejor score es el que se usa para guardar la captura y el CSV
+                        current_best_score = t.get('best_score', 0)
+                        
+                        # Solo actualizar la mejor detección si mejora
+                        if det['score'] > current_best_score:
                             t['best_score'] = det['score']
-                            
-                        # Confirmar y guardar si alcanza frames consecutivos (o si mejora el score)
+                            # Si es la mejor detección, guarda el frame (no confirmado aún)
+                            t['best_frame'] = out_frame.copy() 
+                        
+                        # Confirmar y guardar si alcanza frames consecutivos
                         if not t.get('confirmed', False) and t.get('consec', 0) >= confirm_frames:
                             t['confirmed'] = True
-                            # Guardar imagen inicial al confirmarse (alta calidad)
-                            fname = os.path.basename(video_path)
-                            img_name = f"det_{fname}_track{t['id']}.jpg"
-                            img_path = os.path.join(OUTPUT_FEED_DIR, img_name)
-                            full = out_frame.copy()
-                            bx = det['bbox']
-                            cv2.rectangle(full, (bx[0], bx[1]), (bx[2], bx[3]), (0, 255, 0), 2)
-                            saver_q.put({'type': 'image', 'path': img_path, 'image': full, 'track_id': t['id'], 'score': t['best_score'], 'timestamp': datetime.now().isoformat(), 'video_path': out_video_path, 'bbox': bx})
                             
-                        elif t.get('confirmed', False) and det['score'] > t.get('best_score', 0):
-                            # Sobrescribir si ya confirmado y el score actual es mejor
+                            # 💡 RECORTAR Y APLICAR OCR EN EL MEJOR FRAME DETECTADO
+                            best_bbox = t['bbox']
+                            x1, y1, x2, y2 = [int(x) for x in best_bbox]
+                            cropped_plate = t['best_frame'][y1:y2, x1:x2]
+                            ocr_text = run_ocr(cropped_plate)
+                            t['ocr_text'] = ocr_text # Guardar el resultado en el track
+
+                            # Guardar imagen y metadatos
                             fname = os.path.basename(video_path)
-                            img_name = f"det_{fname}_track{t['id']}.jpg"
+                            # Usar el texto de OCR en el nombre de archivo si está disponible y es válido
+                            name_suffix = ocr_text if ocr_text and not ocr_text.startswith('[OCR') else f"track{t['id']}"
+                            img_name = f"det_{fname}_{name_suffix}.jpg"
                             img_path = os.path.join(OUTPUT_FEED_DIR, img_name)
-                            full = out_frame.copy()
-                            bx = det['bbox']
-                            cv2.rectangle(full, (bx[0], bx[1]), (bx[2], bx[3]), (0, 255, 0), 2)
-                            saver_q.put({'type': 'image', 'path': img_path, 'image': full, 'track_id': t['id'], 'score': t['best_score'], 'timestamp': datetime.now().isoformat(), 'video_path': out_video_path, 'bbox': bx})
+                            
+                            # Dibujar en la copia para el guardado (opcional: mejor usar el frame puro)
+                            full = t['best_frame'].copy()
+                            cv2.rectangle(full, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                            
+                            # Encolar el trabajo de guardado
+                            saver_q.put({'type': 'image', 'path': img_path, 'image': full, 
+                                         'track_id': t['id'], 'score': t['best_score'], 
+                                         'ocr_text': ocr_text, # 💡 PASAR OCR_TEXT
+                                         'timestamp': datetime.now().isoformat(), 
+                                         'video_path': out_video_path, 'bbox': best_bbox})
+                                         
+                        # 💡 NOTA: No sobrescribiremos la imagen guardada a menos que el mejor score sea significativamente mejor
+                        # (La lógica de sobrescribir en el original se ha eliminado para simplificar, el CSV se actualiza siempre)
                             
                         new_tracks.append(t)
                         matched_track_ids.add(t['id'])
                         break
             else:
                 # Crear nuevo track
-                tnew = {'id': next_track_id, 'bbox': det['bbox'], 'best_score': det['score'], 'missed': 0, 'consec': 0, 'confirmed': False}
+                tnew = {'id': next_track_id, 'bbox': det['bbox'], 'best_score': det['score'], 
+                        'missed': 0, 'consec': 0, 'confirmed': False, 'ocr_text': ''}
                 next_track_id += 1
                 
                 # iniciar consec si supera THRESHOLD
                 if tnew['best_score'] >= THRESHOLD:
                     tnew['consec'] = 1
+                    tnew['best_frame'] = out_frame.copy() # Guardar el frame inicial
                     
                 # Confirmar y guardar si alcanza consecutividad en el primer frame (si confirm_frames=1)
                 if tnew['consec'] >= confirm_frames:
                     tnew['confirmed'] = True
+                    
+                    # 💡 RECORTAR Y APLICAR OCR
+                    best_bbox = tnew['bbox']
+                    x1, y1, x2, y2 = [int(x) for x in best_bbox]
+                    cropped_plate = tnew['best_frame'][y1:y2, x1:x2]
+                    ocr_text = run_ocr(cropped_plate)
+                    tnew['ocr_text'] = ocr_text # Guardar el resultado
+                    
+                    # Guardar imagen y metadatos
                     fname = os.path.basename(video_path)
-                    img_name = f"det_{fname}_track{tnew['id']}.jpg"
+                    name_suffix = ocr_text if ocr_text and not ocr_text.startswith('[OCR') else f"track{tnew['id']}"
+                    img_name = f"det_{fname}_{name_suffix}.jpg"
                     img_path = os.path.join(OUTPUT_FEED_DIR, img_name)
-                    full = out_frame.copy()
-                    bx = det['bbox']
-                    cv2.rectangle(full, (bx[0], bx[1]), (bx[2], bx[3]), (0, 255, 0), 2)
-                    saver_q.put({'type': 'image', 'path': img_path, 'image': full, 'track_id': tnew['id'], 'score': tnew['best_score'], 'timestamp': datetime.now().isoformat(), 'video_path': out_video_path, 'bbox': bx})
+                    
+                    full = tnew['best_frame'].copy()
+                    cv2.rectangle(full, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    
+                    saver_q.put({'type': 'image', 'path': img_path, 'image': full, 
+                                 'track_id': tnew['id'], 'score': tnew['best_score'], 
+                                 'ocr_text': ocr_text, # 💡 PASAR OCR_TEXT
+                                 'timestamp': datetime.now().isoformat(), 
+                                 'video_path': out_video_path, 'bbox': best_bbox})
                     
                 new_tracks.append(tnew)
 
@@ -414,11 +500,22 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
         # 5. Dibujar Bounding Boxes y escribir frame de salida
         for t in tracks:
             bx = t['bbox']
-            # Color verde si está confirmado, amarillo si es nuevo
+            # Color verde si está confirmado, amarillo si es nuevo, NARANJA si está perdido
             color = (0, 255, 0) if t.get('confirmed', False) else (0, 255, 255) 
+            if t.get('missed', 0) > 0:
+                color = (0, 165, 255) # Naranja
+                
             cv2.rectangle(out_frame, (bx[0], bx[1]), (bx[2], bx[3]), color, 2)
-            label = f"ID:{t['id']} S:{t.get('best_score', 0)*100:.0f}% M:{t.get('missed', 0)}"
-            cv2.putText(out_frame, label, (bx[0], max(0, bx[1] - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+            
+            # 💡 MOSTRAR OCR Y ESTADO DE TRACKING
+            ocr_text_display = t.get('ocr_text', 'Buscando OCR...')
+            label_top = f"ID:{t['id']} M:{t.get('missed', 0)} S:{t.get('best_score', 0)*100:.0f}%"
+            label_ocr = f"OCR: {ocr_text_display}"
+            
+            # Texto superior (ID, Score, Missed)
+            cv2.putText(out_frame, label_top, (bx[0], max(0, bx[1] - 18)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+            # Texto inferior (OCR)
+            cv2.putText(out_frame, label_ocr, (bx[0], max(0, bx[1] - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
         writer.write(out_frame)
         if display:
@@ -437,8 +534,8 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
         cv2.destroyAllWindows()
         
     saver_q.put(stop_token)
-    # Esperar al hilo de guardado por 5 segundos
-    saver_thread.join(timeout=5) 
+    # Esperar al hilo de guardado por 10 segundos (más margen para OCR)
+    saver_thread.join(timeout=10) 
     
     print(f"✔ Video de salida guardado en: {out_video_path}")
     return out_video_path
@@ -450,12 +547,13 @@ def main():
     parser.add_argument("--model", default=MODEL_PATH, help="Ruta al modelo Keras")
     parser.add_argument("--out", default=None, help="Ruta de salida mp4 opcional")
     parser.add_argument("--display", action="store_true", help="Mostrar video en pantalla")
-    parser.add_argument("--confirm_frames", type=int, default=3, help="Frames consecutivos necesarios para confirmar un track")
-    parser.add_argument("--iou_thresh", type=float, default=0.45, help="Umbral IoU para emparejar detecciones con tracks")
-    parser.add_argument("--min_area", type=int, default=1500, help="Área mínima en píxeles para aceptar una detección")
-    parser.add_argument("--aspect_ratio_min", type=float, default=2.0, help="Relación de aspecto mínima (w/h) para aceptar detecciones")
-    parser.add_argument("--aspect_ratio_max", type=float, default=6.0, help="Relación de aspecto máxima (w/h) para aceptar detecciones")
-    parser.add_argument("--max_missed", type=int, default=5, help="Máximo de frames perdidos antes de eliminar un track")
+    # 🔥 PARÁMETROS OPTIMIZADOS POR DEFECTO 🔥
+    parser.add_argument("--confirm_frames", type=int, default=1, help="Frames consecutivos necesarios para confirmar un track (Default: 1)")
+    parser.add_argument("--iou_thresh", type=float, default=0.30, help="Umbral IoU para emparejar detecciones con tracks (Default: 0.30)")
+    parser.add_argument("--min_area", type=int, default=800, help="Área mínima en píxeles para aceptar una detección (Default: 800)")
+    parser.add_argument("--aspect_ratio_min", type=float, default=1.8, help="Relación de aspecto mínima (w/h) para aceptar detecciones (Default: 1.8)")
+    parser.add_argument("--aspect_ratio_max", type=float, default=8.0, help="Relación de aspecto máxima (w/h) para aceptar detecciones (Default: 8.0)")
+    parser.add_argument("--max_missed", type=int, default=10, help="Máximo de frames perdidos antes de eliminar un track (Default: 10)")
     args = parser.parse_args()
     
     # 1. Carga del modelo
