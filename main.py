@@ -15,7 +15,6 @@ from src.inference.predict_image import infer_image
 from src.inference.predict_video import (
     process_video as run_video_detection,
     load_model_safe,
-    find_latest_model_in_models_dir
 )
 from src.inference.predict_webcam import run_webcam
 
