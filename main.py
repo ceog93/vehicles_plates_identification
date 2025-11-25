@@ -148,32 +148,26 @@ def main():
                 return main()
             else:
                 for vid in files:
-                    print(f"Procesando video (OCR colombiano multiplaca): {vid}")
+                    print(f"Procesando video (OCR colombiano multiplaca): {vid}")                    
                     try:
-                        # CORRECCIÓN: 'input_video' se cambia a 'video_path'
                         run_video_detection(
-                            model=model,
-                            video_path=vid, 
-                            # Cambié 'output_folder=out_dir' por 'out_video_path'
-                            # ya que la función process_video solo acepta out_video_path.
-                            # El manejo del path de salida se hace dentro de process_video si es None.
+                            model=model,                            video_path=vid, 
                             out_video_path=None, 
-                            display=True, # show_window se llama 'display' en process_video
-                            iou_thresh=0.45, # nms_thresh se llama 'iou_thresh'
-                            min_area=1400,
-                            # Los argumentos 'min_conf', 'max_area', 'allow_vertical', y 'ocr_lang' 
-                            # no existen en la definición de process_video que proporcionaste, 
-                            # por lo que deben ser removidos o ajustados a los parámetros de process_video.
-                            max_missed=5,
-                            confirm_frames=3,
-                            aspect_ratio_min=2.0,
-                            aspect_ratio_max=6.0
+                            display=True, 
+                            iou_thresh=0.30, # Ajustado a los parámetros por defecto de process_video (0.30)
+                            min_area=800,    # Ajustado a los parámetros por defecto de process_video (800)
+                            max_missed=10,   # Ajustado a los parámetros por defecto de process_video (10)
+                            confirm_frames=1, # Ajustado a los parámetros por defecto de process_video (1)
+                            aspect_ratio_min=1.8, # Ajustado a los parámetros por defecto de process_video (1.8)
+                            aspect_ratio_max=8.0, # Ajustado a los parámetros por defecto de process_video (8.0)
+                            # 🔥 NUEVOS PARÁMETROS AGREGADOS 🔥
+                            dampening_factor=0.75,
+                            ocr_padding_ratio=0.1
                         )
                     except Exception as e:
                         print("Error procesando", vid, e)
                         sleep(2)
                         
-
             input("Enter para continuar...")
             return main()
 
