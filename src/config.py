@@ -76,10 +76,6 @@ OUTPUT_FEED_DIR =  os.path.join(PRODUCTION_DIR, "output_results")
 os.makedirs(OUTPUT_FEED_DIR, exist_ok=True) # Asegura que la carpeta de salida exista
 TEST_VIDEO_PATH = os.path.join(INPUT_FEED_DIR, "video_prueba.mp4")
 
-# ============================= DATOS SINTÉTICOS =============================
-LOGO_DIR = os.path.join(BASE_DIR, "images")
-LOGO_PATH = os.path.join(LOGO_DIR, "logo_placa.png")
-
 # ============================= ENTRENAMIENTO =============================
 # Parámetros de entrenamiento
 IMG_SIZE = (416, 416) # Tamaño de las imágenes de entrada para el modelo
