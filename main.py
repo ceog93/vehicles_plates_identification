@@ -8,6 +8,7 @@ from src.utils.preprocess_and_augmentation import preprocess_and_save_data_modul
 from src.utils.view_web_dataset import view_web_dataset
 from src.train import train_model
 from src.config import LATEST_MODEL_PATH
+from time import sleep
 
 # inferencia
 from src.inference.predict_image import infer_image
@@ -30,7 +31,6 @@ def clean_screen():
 def print_header():
     clean_screen()
     check_gpu_status()
-    input(' Presione enter para continuar...')
     print('\n')
     print("########################################")
     print("        INTELIGENCIA ARTIFICIAL")
@@ -41,7 +41,7 @@ def print_header():
     print("          PLACAS VEHICULARES")
     print("########################################")
     print('\n')
-    input(' Presione enter para continuar...')
+    input("Presione Enter para continuar...")
     clean_screen()
 
 
@@ -104,7 +104,7 @@ def main():
         # cargar modelo automáticamente UNA sola vez
         try:
             print(f"Cargando modelo automáticamente desde: {LATEST_MODEL_PATH}")
-            input("Presione Enter para continuar...")
+            sleep(2)
             model = load_model_safe(LATEST_MODEL_PATH)
         except Exception as e:
             print("No se pudo cargar el modelo:", e)
@@ -114,7 +114,7 @@ def main():
         # ------------------ IMAGEN -------------------
         if mode == "1":
             print("Seleccion de modo: Imagen")
-            input("Presione Enter para continuar...")
+            sleep(2)
             in_dir = INPUT_FEED_DIR
             out_dir = OUTPUT_FEED_DIR
             os.makedirs(out_dir, exist_ok=True)
@@ -128,15 +128,13 @@ def main():
                 for f in files:
                     out_f = os.path.join(out_dir, "det_" + os.path.basename(f))
                     infer_image(model, f, out_path=out_f)
-
-            input("Enter para continuar...")
+                    print(f"Imagen procesada: {f} -> {out_f}")
             return main()
 
         # ------------------ VIDEO -------------------
-        # ------------------ VIDEO -------------------
         elif mode == "2":
             print("Seleccion de modo: Video")
-            input("Presione Enter para continuar...")
+            sleep(2)
             in_dir = INPUT_FEED_DIR
             out_dir = OUTPUT_FEED_DIR
             os.makedirs(out_dir, exist_ok=True)
@@ -146,6 +144,8 @@ def main():
 
             if not files:
                 print("No hay videos en INPUT_FEED_DIR")
+                input("Enter para continuar...")
+                return main()
             else:
                 for vid in files:
                     print(f"Procesando video (OCR colombiano multiplaca): {vid}")
@@ -171,6 +171,8 @@ def main():
                         )
                     except Exception as e:
                         print("Error procesando", vid, e)
+                        sleep(2)
+                        
 
             input("Enter para continuar...")
             return main()
