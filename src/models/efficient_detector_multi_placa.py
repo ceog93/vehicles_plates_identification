@@ -1,3 +1,5 @@
+#src/models/efficient_detector_multi_placa.py
+
 """
 Módulo del detector multi-placa basado en EfficientNetB0.
 

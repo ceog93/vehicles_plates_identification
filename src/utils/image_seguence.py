@@ -1,5 +1,7 @@
 '''
 Módulo que define un generador de datos para cargar imágenes en lotes desde el disco.
+Funciona como un DataLoader que carga imágenes por lotes desde el disco durante el entrenamiento
+en lugar de cargar todo el dataset en memoria RAM. Esto es crucial para datasets grandes.
 Utiliza la clase Sequence de Keras para manejar grandes conjuntos de datos que no caben en memoria.
 '''
 import numpy as np
@@ -22,6 +24,9 @@ class ImageSequence(tf.keras.utils.Sequence):
         
         # LLAMAR AL CONSTRUCTOR PADRE
         super().__init__(**kwargs)
+        '''
+        
+        '''
         
         # Almacenamos el DataFrame y otros parámetros
         self.df = df

@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 #from src.models.mobile_net_detector import build_mobile_net_detector as build_detector_mobilenet # Alternativa: Usa MobileNetV2 como modelo base
 # from src.utils.preprocess_and_augmentation import preprocess_and_save_data_modular # Se comenta ya que se usa dataset pre-procesado
 from src.models.efficient_detector_multi_placa import build_multishot_detector_from_scratch as build_detector 
-
+from src.utils.image_seguence import ImageSequence # generador de datos para evitar bloqueo de memoria
 
 
 # ============================
@@ -72,16 +72,16 @@ def load_processed_split(data_dir, df_split):
 
 def plot_training_history(history):
     ''' Graficar métricas de entrenamiento y validación '''
-    plt.figure(figsize=(10, 6))
-    plt.plot(history.history['loss'], label='Pérdida Entrenamiento')
-    plt.plot(history.history['val_loss'], label='Pérdida Validación')
-    plt.title("Pérdida del detector (Huber Loss)")
-    plt.xlabel("Epoch")
-    plt.ylabel("Huber Loss")
-    plt.legend()
-    plt.grid(True)
-    plt.savefig(TRAINING_LOSS_PLOT_PATH) 
-    plt.show()
+    plt.figure(figsize=(10, 6)) # Tamaño de la figura
+    plt.plot(history.history['loss'], label='Pérdida Entrenamiento') # Eje Y: Pérdida de entrenamiento
+    plt.plot(history.history['val_loss'], label='Pérdida Validación') # Eje X: Pérdida de validación
+    plt.title("Pérdida del detector (Huber Loss)") # Título del gráfico
+    plt.xlabel("Epoch") # Etiqueta del eje X para épocas o iteraciones
+    plt.ylabel("Huber Loss") # Etiqueta del eje Y para "Huber Loss" función de pérdida utilizada en regresión robusta
+    plt.legend() # Mostrar leyenda
+    plt.grid(True) # Mostrar cuadrícula
+    plt.savefig(TRAINING_LOSS_PLOT_PATH) # Guardar la figura en la ruta especificada
+    plt.show() # Mostrar la figura
 
 # ============================
 # FUNCIÓN: ENTRENAR MODELO (Actualizada para usar las variables)
@@ -95,9 +95,9 @@ def train_model(epochs=EPOCHS, batch_size=BATCH_SIZE, img_size=IMG_SIZE,learning
     
     # 1. Configuración de directorios de salida
     # Crear las carpetas necesarias para guardar checkpoints, logs y plots
-    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
-    os.makedirs(LOGS_DIR, exist_ok=True)
-    os.makedirs(PLOTS_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True) # Carpeta del modelo actual
+    os.makedirs(LOGS_DIR, exist_ok=True) # Carpeta de logs
+    os.makedirs(PLOTS_DIR, exist_ok=True) # Carpeta de plots
 
     '''
     # --------------------------  PREPROCESAMIENTO Y GUARDADO DE DATOS --------------------------
@@ -115,12 +115,12 @@ def train_model(epochs=EPOCHS, batch_size=BATCH_SIZE, img_size=IMG_SIZE,learning
     
     print(f"             2/6 Separando datos de entrenamiento y validación...")
     
-    df_train = df_processed[df_processed['split'] == 'train']
-    df_val = df_processed[df_processed['split'] == 'valid']
+    df_train = df_processed[df_processed['split'] == 'train'] # Seleccionar filas de entrenamiento en el csv
+    df_val = df_processed[df_processed['split'] == 'valid'] # Seleccionar filas de validación en el csv
     
-    # --------------------------  CARGA DE DATOS PROCESADOS  --------------------------
-    # Cargar datos procesados en memoria
+    # --------------------------  CARGA DE DATOS PROCESADOS [Arrays] --------------------------
     '''
+    # Cargar datos procesados en memoria
     # Se comenta ya que al cargar dataset de más de 5k imágenes colapsa la memoria RAM al generar los arrays
     X_train, y_train = load_processed_split(TRAIN_DATA_DIR, df_train)
     X_val, y_val = load_processed_split(VALIDATION_DATA_DIR, df_val)
@@ -129,28 +129,44 @@ def train_model(epochs=EPOCHS, batch_size=BATCH_SIZE, img_size=IMG_SIZE,learning
     print(f"                2.2 Datos de Validación: {len(X_val)}")
     '''
     # --------------------------  USO DE GENERADORES DE DATOS  --------------------------
-    # como reemplazo usamos un generador de datos
-    from src.utils.image_seguence import ImageSequence
-    
+       
     # Crea los generadores de datos (¡Solución al error de memoria!)
-    train_generator = ImageSequence(df_train, TRAIN_DATA_DIR, batch_size, image_shape=img_size, shuffle=True)
-    validation_generator = ImageSequence(df_val, VALIDATION_DATA_DIR, batch_size, image_shape=img_size, shuffle=False)
+    '''
+    Funciona como un DataLoader que carga imágenes por lotes desde el disco durante el entrenamiento
+    en lugar de cargar todo el dataset en memoria RAM. Esto es crucial para datasets grandes.
+    '''
+    train_generator = ImageSequence(df_train, TRAIN_DATA_DIR, batch_size, image_shape=img_size, shuffle=True) # Generador de entrenamiento 
+    validation_generator = ImageSequence(df_val, VALIDATION_DATA_DIR, batch_size, image_shape=img_size, shuffle=False) # Generador de validación
     
     # 2. Definir Callbacks
        
     print(f"             3/6 Entrenando y compilando modelo,...\n")
-    model = build_detector(img_size=IMG_SIZE, learning_rate=LEARNING_RATE)
+    model = build_detector(img_size=IMG_SIZE, learning_rate=LEARNING_RATE) # Construir el modelo de detección
     
     print(f"             4/6 Iniciando proceso de entrenamiento con Callbacks...\n")
     
     # Lista de Callbacks
+    '''
+    Lista de callbacks para el entrenamiento:
+    - CSVLogger: Guarda el historial de entrenamiento en un archivo CSV.
+    - EarlyStopping: Detiene el entrenamiento si la pérdida de validación no mejora después de 7 épocas.
+    - ReduceLROnPlateau: Reduce la tasa de aprendizaje si la pérdida de validación no mejora después de 5 épocas.
+    - ModelCheckpoint: Guarda el mejor modelo basado en la pérdida de validación.
+    '''
     callbacks = [
         CSVLogger(TRAINING_LOG_CSV, append=True), # Log de entrenamiento en CSV
         EarlyStopping(monitor='val_loss', patience=7, restore_best_weights=True, verbose=1), # Early Stopping (Detener si no mejora)
         ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, min_lr=1e-6, verbose=1), # Reducción de tasa de aprendizaje
-        ModelCheckpoint(MODEL_PATH,monitor='val_loss',save_best_only=True,verbose=1)
+        ModelCheckpoint(MODEL_PATH,monitor='val_loss',save_best_only=True,verbose=1) # Guardar el mejor modelo basado en val_loss
     ]
-
+    '''
+    Iniciar el entrenamiento del modelo
+    Usamos los generadores de datos en lugar de arrays completos para evitar errores de memoria
+    Nota: Al usar generadores, no se especifica el parámetro batch_size en model.fit()
+    porque el generador ya maneja los lotes internamente.
+    por ese motivo, se comenta la línea batch_size=BATCH_SIZE
+    Además, los datos de entrada y validación son los generadores creados anteriormente.
+    '''
     history = model.fit(
         #X_train, y_train, # Datos de Entrenamiento x: Imágenes, y: Bounding Boxes
         #validation_data=(X_val, y_val), # Datos de Validación X_val: Imágenes, y_val: Bounding Boxes
@@ -169,7 +185,7 @@ def train_model(epochs=EPOCHS, batch_size=BATCH_SIZE, img_size=IMG_SIZE,learning
     
 
     print(f"\n             Graficando historial de entrenamiento en {os.path.join(PLOTS_DIR, 'training_loss.png')}...")
-    plot_training_history(history)
+    plot_training_history(history) # Graficar y guardar el historial de entrenamiento
     
     print(f"               6/6 Proceso de entrenamiento finalizado.")
 
