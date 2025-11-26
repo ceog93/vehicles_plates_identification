@@ -79,13 +79,15 @@ def draw_labels(image, bbox, track_id, score, ocr_text="", color=(0, 255, 0)):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
     # 3. Preparar etiqueta inferior (OCR) solo si existe texto
-    if ocr_text:
+    # ocr_text ahora puede ser un diccionario {'plate': '...', 'city': '...'}
+    plate_text = ocr_text.get('plate', '') if isinstance(ocr_text, dict) else ocr_text
+    if plate_text:
         # Formato explícito solicitado: "PLACA: <texto>"
-        label_bot = f"PLACA: {ocr_text}"
+        label_bot = f"PLACA: {plate_text}"
         (w_bot, h_bot), _ = cv2.getTextSize(label_bot, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
         
         # Calcular posición inferior asegurando que no se salga de la imagen
-        y_bot_start = min(h_img, y2)
+        y_bot_start = min(h_img - 1, y2)
         y_bot_end = min(h_img, y2 + 30)
         
         # Fondo negro inferior
@@ -124,11 +126,12 @@ def draw_bbox_safe(image, bbox, track_id, score, ocr_text="", color=(0, 255, 0))
             pass  # Si las etiquetas fallan, el bbox ya está dibujado
         
         # Intentar agregar OCR (si falla, el bbox ya está dibujado)
-        if ocr_text:
+        plate_text = ocr_text.get('plate', '') if isinstance(ocr_text, dict) else ocr_text
+        if plate_text:
             try:
-                label_bot = f"PLACA: {ocr_text}"
+                label_bot = f"PLACA: {plate_text}"
                 (w_bot, h_bot), _ = cv2.getTextSize(label_bot, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
-                y_bot_start = min(h_img, y2)
+                y_bot_start = min(h_img - 1, y2)
                 y_bot_end = min(h_img, y2 + 30)
                 cv2.rectangle(image, (x1, y_bot_start), (x1 + w_bot + 10, y_bot_end), (0, 0, 0), -1)
                 cv2.putText(image, label_bot, (x1 + 5, min(h_img - 5, y2 + 22)), 
@@ -234,64 +237,64 @@ def run_ocr(cropped_img):
     # OCR_DEFAULTS = {'allowlist': '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'mag_ratio': 1.0}
     # Asegúrate de que OCR_DEFAULTS y READER están definidos correctamente
     if READER is None:
-        return "[OCR NO INSTALADO]"
+        return {'plate': "[OCR NO INSTALADO]", 'city': ''}
     try:
-        # 0. Conversión de color (necesario para EasyOCR)
+        # 0. Conversión de color
         if len(cropped_img.shape) == 3 and cropped_img.shape[2] == 3:
             rgb_crop = cv2.cvtColor(cropped_img, cv2.COLOR_BGR2RGB)
         else:
             rgb_crop = cropped_img
         
-        # 1. Ejecutar OCR usando la configuración optimizada (mag_ratio, allowlist)
-        results = READER.readtext(rgb_crop, **OCR_DEFAULTS, detail=0, paragraph=True)
+        # 1. Ejecutar OCR para obtener resultados detallados (texto y su bounding box)
+        # Se elimina `paragraph=True` y `detail=0` para obtener la lista de detecciones.
+        results = READER.readtext(rgb_crop, **OCR_DEFAULTS)
         
         if results:
-            # 2. Limpieza de texto:
-            # Elimina todos los espacios en blanco (incluyendo \ua0, \xa0, tabs, etc.) y guiones
-            # Usa 're.sub' para una limpieza de espacios más robusta
-            raw_text = "".join(results)
-            raw_text = re.sub(r'\s+', '', raw_text).replace("-", "").upper()
-            
-            # 3. **POST-PROCESAMIENTO ESTRICTO PARA FORMATO COLOMBIANO (6 caracteres)**
-            if len(raw_text) == 6:
-                corrected_plate = ""
-                
-                # --- Bloque Alfabético (Posiciones 0, 1, 2) ---
-                for i in range(3):
-                    char = raw_text[i]
-                    # Forzar a LETRA: Reemplazar 0 por O, 1 por I
-                    if char == '0':
-                        corrected_plate += 'O'
-                    elif char == '1' or char == '4':
-                        corrected_plate += 'I'
-                    else:
-                        corrected_plate += char
+            # 2. Ordenar los resultados por posición vertical (de arriba a abajo)
+            # La coordenada Y está en result[0][0][1]
+            results.sort(key=lambda r: r[0][0][1])
 
-                # --- Bloque Numérico/Alfanumérico (Posiciones 3, 4, 5) ---
-                for i in range(3, 6):
-                    char = raw_text[i]
-                    # Forzar a NÚMERO (si estamos en pos 3 o 4)
-                    if i <= 4:
-                        if char == 'O' or char == 'Q':
-                            corrected_plate += '0'
-                        elif char == 'I' or char == 'L':
-                            corrected_plate += '1'
-                        elif char == 'S':
-                            corrected_plate += '5'
-                        else:
+            # 3. Asignar placa y ciudad
+            plate_text = ""
+            city_text = ""
+
+            # El primer resultado (el más alto) es la placa
+            if len(results) > 0:
+                raw_plate = results[0][1]
+                plate_text = re.sub(r'\s+', '', raw_plate).replace("-", "").upper()
+
+                # --- POST-PROCESAMIENTO ESTRICTO PARA PLACA (6 caracteres) ---
+                if len(plate_text) == 6:
+                    corrected_plate = ""
+                    # Bloque Alfabético (Posiciones 0, 1, 2)
+                    for i in range(3):
+                        char = plate_text[i]
+                        if char == '0': corrected_plate += 'O'
+                        elif char == '1' or char == '4': corrected_plate += 'I'
+                        else: corrected_plate += char
+                    # Bloque Numérico/Alfanumérico (Posiciones 3, 4, 5)
+                    for i in range(3, 6):
+                        char = plate_text[i]
+                        if i <= 4: # Forzar a NÚMERO
+                            if char == 'O' or char == 'Q': corrected_plate += '0'
+                            elif char == 'I' or char == 'L': corrected_plate += '1'
+                            elif char == 'S': corrected_plate += '5'
+                            else: corrected_plate += char
+                        else: # Posición 5 (puede ser N o L)
                             corrected_plate += char
-                    else: # Posición 5 (puede ser N o L)
-                        corrected_plate += char
-                
-                if len(corrected_plate) == 6:
-                    return corrected_plate
-                
-                return raw_text # Fallback si no se logra la corrección de 6 caracteres
+                    plate_text = corrected_plate
 
-            return raw_text # Si no es de 6, devolver el texto limpio
-        return ""
+            # El segundo resultado (si existe) es la ciudad
+            if len(results) > 1:
+                raw_city = results[1][1]
+                # Limpieza para ciudad: solo letras y espacios, todo mayúsculas
+                city_text = re.sub(r'[^A-Z\s]', '', raw_city.upper()).strip()
+
+            return {'plate': plate_text, 'city': city_text}
+
+        return {'plate': "", 'city': ""}
     except Exception as e:
-        return f"[OCR ERROR: {e}]"
+        return {'plate': f"[OCR ERROR]", 'city': ''}
 
 
 def _iou_numpy(boxA, boxB):
@@ -318,7 +321,7 @@ def select_best_detection_from_history(track):
     """
     history = track.get('detection_history', [])
     if not history:
-        return track.get('best_frame'), track.get('best_bbox'), track.get('best_score'), track.get('ocr_text', '')
+        return track.get('best_frame'), track.get('best_bbox'), track.get('best_score'), track.get('ocr_text', {'plate': '', 'city': ''})
     
     best_det = history[0]
     # Preferir OCR que cumpla el formato colombiano (AAA999)
@@ -326,16 +329,16 @@ def select_best_detection_from_history(track):
     col_plate_re = _re.compile(r'^[A-Z]{3}[0-9]{3}$')
 
     # 1) buscar coincidencias válidas por formato
-    col_matches = [d for d in history if d.get('ocr_text') and col_plate_re.match(d.get('ocr_text'))]
+    col_matches = [d for d in history if isinstance(d.get('ocr_text'), dict) and col_plate_re.match(d.get('ocr_text', {}).get('plate', ''))]
     if col_matches:
         best_det = max(col_matches, key=lambda x: x['score'])
-        return (best_det['frame'], best_det['bbox'], best_det['score'], best_det.get('ocr_text', ''))
+        return (best_det['frame'], best_det['bbox'], best_det['score'], best_det.get('ocr_text', {'plate': '', 'city': ''}))
 
     # 2) buscar OCR exitoso (sin ERR)
-    ocr_success = [d for d in history if d.get('ocr_text') and 'ERR' not in d.get('ocr_text') and '[OCR' not in d.get('ocr_text')]
+    ocr_success = [d for d in history if isinstance(d.get('ocr_text'), dict) and d.get('ocr_text', {}).get('plate') and 'ERR' not in d.get('ocr_text', {}).get('plate', '')]
     if ocr_success:
         best_det = max(ocr_success, key=lambda x: x['score'])
-        return (best_det['frame'], best_det['bbox'], best_det['score'], best_det.get('ocr_text', ''))
+        return (best_det['frame'], best_det['bbox'], best_det['score'], best_det.get('ocr_text', {'plate': '', 'city': ''}))
 
     # 3) fallback: usar la detección con mayor score
     best_det = max(history, key=lambda x: x['score'])
@@ -344,7 +347,7 @@ def select_best_detection_from_history(track):
         best_det['frame'],
         best_det['bbox'],
         best_det['score'],
-        best_det.get('ocr_text', '')
+        best_det.get('ocr_text', {'plate': '', 'city': ''})
     )
 
 def match_detections_to_tracks(detections, tracks, iou_thr=0.30, dist_thr=0.35):
@@ -417,7 +420,7 @@ def start_saver_thread(q, csv_path):
                         if tid: rows[tid] = rec
             except Exception: pass
 
-        fieldnames = ['track_id', 'filepath', 'score', 'ocr_text', 'timestamp', 'video_path', 'bbox_x1', 'bbox_y1', 'bbox_x2', 'bbox_y2']
+        fieldnames = ['track_id', 'filepath', 'score', 'plate_text', 'city_text', 'timestamp', 'video_path', 'bbox_x1', 'bbox_y1', 'bbox_x2', 'bbox_y2']
 
         def write_csv():
             try:
@@ -443,11 +446,13 @@ def start_saver_thread(q, csv_path):
                     if saved:
                         tid = str(job.get('track_id', ''))
                         bbox = job.get('bbox', [0,0,0,0])
+                        ocr_data = job.get('ocr_text', {'plate': '', 'city': ''})
                         rows[tid] = {
                             'track_id': tid,
                             'filepath': path,
                             'score': f"{job.get('score', 0):.4f}",
-                            'ocr_text': job.get('ocr_text', ''),
+                            'plate_text': ocr_data.get('plate', ''),
+                            'city_text': ocr_data.get('city', ''),
                             'timestamp': job.get('timestamp', ''),
                             'video_path': job.get('video_path', ''),
                             'bbox_x1': str(bbox[0]), 'bbox_y1': str(bbox[1]),
@@ -491,8 +496,8 @@ def start_ocr_thread(q, results_dict):
             try:
                 # Ejecutar el OCR (la parte lenta)
                 ocr_text = run_ocr(crop_img)
-                # Guardar el resultado en el diccionario compartido
-                if ocr_text:
+                # Guardar el resultado en el diccionario compartido si se detectó una placa
+                if ocr_text and ocr_text.get('plate'):
                     results_dict[track_id] = ocr_text
             finally:
                 q.task_done()
@@ -656,7 +661,8 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
             # 2. Si el score es mucho mejor (ej: 0.10) O
             # 3. Si se logra un OCR exitoso (si la placa ya está confirmada)
             
-            current_ocr_fail = ('ERR' in tr.get('ocr_text', '')) or not tr.get('ocr_text')
+            ocr_dict = tr.get('ocr_text', {}) if isinstance(tr.get('ocr_text'), dict) else {}
+            current_ocr_fail = ('ERR' in ocr_dict.get('plate', '')) or not ocr_dict.get('plate')
             
             if (quality > tr.get('best_area', 0) * 1.05) or \
                (det['score'] > tr.get('best_score', 0) + 0.10) or \
@@ -710,8 +716,9 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
                 
                 # 2. Evaluar las condiciones con la información más reciente.
                 current_score = det['score']
-                ocr_text = tr.get('ocr_text', '')
-                ocr_is_valid = ocr_text and 'ERR' not in ocr_text and '[OCR' not in ocr_text
+                ocr_dict = tr.get('ocr_text', {}) if isinstance(tr.get('ocr_text'), dict) else {}
+                plate_text = ocr_dict.get('plate', '')
+                ocr_is_valid = plate_text and 'ERR' not in plate_text and '[OCR' not in plate_text
 
                 if current_score >= 0.90 and ocr_is_valid:
                     if current_score > tr.get('saved_score', 0):
@@ -727,8 +734,9 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
                 img_to_save = tr['best_frame'].copy()
                 img_to_save = draw_labels(img_to_save, best_bbox, tr['id'], tr['best_score'], tr['ocr_text'])
 
-                clean_text = tr['ocr_text'].replace('[OCR-', '').replace(']', '')
-                suffix = clean_text if clean_text and "ERR" not in clean_text else "placa"
+                ocr_dict = tr.get('ocr_text', {}) if isinstance(tr.get('ocr_text'), dict) else {}
+                plate_text = ocr_dict.get('plate', '')
+                suffix = plate_text if plate_text and "ERR" not in plate_text else "placa"
                 img_name = f"{ts}_ID{tr['id']}_{suffix}.jpg"
 
                 tr['saved_score'] = tr['best_score']
@@ -773,7 +781,7 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
                 'missed': 0,
                 'seen': 1 if det['score'] >= THRESHOLD else 0,
                 'confirmed': False,
-                'ocr_text': '',
+                'ocr_text': {'plate': '', 'city': ''}, # Inicializar como diccionario
                 'last_frame': frame_idx,
                 'saved_score': 0.0,
                 'age': 1,
@@ -787,11 +795,11 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
                     ocr_q.put({'track_id': tnew['id'], 'image': crop})
             
             # Consultar si el OCR ya terminó (poco probable, pero posible)
-            initial_ocr = ocr_results.get(tnew['id'], '')
+            initial_ocr = ocr_results.get(tnew['id'], {'plate': '', 'city': ''})
             tnew['ocr_text'] = initial_ocr
             
             tnew['detection_history'] = [
-                {'bbox': det['bbox'].copy(), 'score': det['score'], 'frame': bgr.copy(), 'frame_idx': frame_idx, 'ocr_text': initial_ocr}
+                {'bbox': det['bbox'].copy(), 'score': det['score'], 'frame': bgr.copy(), 'frame_idx': frame_idx, 'ocr_text': initial_ocr.copy()}
             ]
             tnew['current_score'] = det['score']
             tracks.append(tnew); next_track_id += 1
@@ -816,7 +824,7 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
             display_bbox = tr['bbox'] # Usar siempre la bbox principal del track
             display_score = tr.get('current_score', tr.get('best_score', 0))
             color = (0, 255, 0) if tr.get('confirmed', False) else (0, 165, 255)
-            ocr_disp = tr.get('ocr_text', '')
+            ocr_disp = tr.get('ocr_text', {'plate': '', 'city': ''})
             
             # DIBUJAR SIEMPRE si el track está activo
             out_frame = draw_bbox_safe(out_frame, display_bbox, tr['id'], display_score, ocr_disp, color)
