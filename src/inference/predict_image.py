@@ -29,7 +29,7 @@ os.makedirs(OUTPUT_FEED_DIR, exist_ok=True)
 def load_model_safe(model_path):
     return load_model_safe(model_path)
 
-def infer_image(model, img_path, out_dir=None, img_size=None):
+def infer_image(model, img_path, out_dir=None, img_size=None, saver_q=None, ocr_q=None, ocr_results=None):
     # Leer imagen original
     img_bgr = cv2.imread(img_path)
     if img_bgr is None:
@@ -60,6 +60,10 @@ def infer_image(model, img_path, out_dir=None, img_size=None):
 
     out_bgr = img_bgr.copy() # Usar una copia de la imagen original para dibujar
     
+    # Inicializar ocr_data para evitar NameError si no hay detecciones
+    # Usaremos un diccionario para mapear track_id a ocr_data
+    detections_data = {}
+
     track_id_counter = 1 # Usar un ID simple para cada detección en la imagen
     for box_norm, score in zip(boxes_norm, scores):
         # Mapear de coordenadas normalizadas a píxeles de la imagen original
@@ -71,32 +75,56 @@ def infer_image(model, img_path, out_dir=None, img_size=None):
         
         bbox_orig = [x1_orig, y1_orig, x2_orig, y2_orig]
 
-        # Recortar la región de la placa para OCR
-        crop = img_bgr[y1_orig:y2_orig, x1_orig:x2_orig].copy()
-        ocr_data = {'plate': '', 'city': ''}
-        if crop.size > 0:
-            ocr_data = run_ocr(crop)
+        # 1. Enviar todos los trabajos de OCR a la cola
+        if ocr_q is not None and ocr_results is not None:
+            crop = img_bgr[y1_orig:y2_orig, x1_orig:x2_orig].copy()
+            if crop.size > 0:
+                ocr_q.put({'track_id': track_id_counter, 'image': crop})
         
-        # Dibujar las etiquetas usando la función compartida
-        out_bgr = draw_labels(out_bgr, bbox_orig, track_id_counter, score, ocr_data)
+        # Guardar la información de la detección sin el OCR por ahora
+        detections_data[track_id_counter] = {'bbox': bbox_orig, 'score': score}
         track_id_counter += 1
 
-    # Si no se especifica un directorio de salida, se crea uno nuevo para esta imagen.
-    if out_dir is None:
-        ts_folder = datetime.now().strftime('%Y%m%d_%H%M%S')
-        out_dir = os.path.join(OUTPUT_FEED_DIR, f"img_{ts_folder}")
-        os.makedirs(out_dir, exist_ok=True)
+    # 2. Esperar a que el hilo de OCR termine todos los trabajos para esta imagen
+    if ocr_q is not None:
+        ocr_q.join()
 
-    # Construir el nombre del archivo con el formato estandarizado
-    # Nota: para una sola imagen, solo hay una detección, así que tomamos el último OCR.
-    ts_file = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-    ocr_dict = ocr_data if isinstance(ocr_data, dict) else {}
-    plate_text = ocr_dict.get('plate', '')
-    suffix = plate_text if plate_text and "ERR" not in plate_text else "placa"
-    # Usamos el último ID de detección para el nombre del archivo
-    out_path = os.path.join(out_dir, f"{ts_file}_ID_{track_id_counter-1}_{suffix}.jpg")
-    cv2.imwrite(out_path, out_bgr)
-    print(f"Resultado guardado en: {out_path}")
+    # 3. Ahora que el OCR ha terminado, actualizar los datos y dibujar las etiquetas
+    for tid, data in detections_data.items():
+        # Actualizar la entrada de la detección con su resultado de OCR
+        ocr_data = ocr_results.get(tid, {'plate': '', 'city': ''}) if ocr_results is not None else {'plate': '', 'city': ''}
+        data['ocr'] = ocr_data
+
+        # Dibujar las etiquetas usando la función compartida
+        out_bgr = draw_labels(out_bgr, data['bbox'], tid, data['score'], data['ocr'])
+
+    # Solo guardar la imagen si se encontró al menos una detección
+    if track_id_counter > 1:
+        if out_dir is None:
+            ts_folder = datetime.now().strftime('%Y%m%d_%H%M%S')
+            out_dir = os.path.join(OUTPUT_FEED_DIR, f"img_{ts_folder}")
+            os.makedirs(out_dir, exist_ok=True)
+
+        # Construir el nombre del archivo con el formato solicitado
+        ts_file = datetime.now().strftime('%Y%m%d_%H_%M_%S')
+        first_det_data = detections_data.get(1, {})
+        plate_text = first_det_data.get('ocr', {}).get('plate', '')
+        suffix = plate_text if plate_text and "ERR" not in plate_text else "placa"
+        out_path = os.path.join(out_dir, f"{ts_file}_ID_1_{suffix}.jpg")
+        
+        # Si se está usando el sistema de colas, enviar al saver_thread
+        if saver_q is not None:
+            # FIX: Definir la variable que faltaba obteniendo los datos de la primera detección
+            first_det_data = detections_data.get(1, {})
+            # Enviamos la primera detección como representativa para el CSV
+            saver_q.put({'type': 'image', 'path': out_path, 'image': out_bgr, 'track_id': 1, 
+                         'score': first_det_data.get('score', 0), 'ocr_text': first_det_data.get('ocr', {}),
+                         'timestamp': datetime.now().isoformat(), 'bbox': first_det_data.get('bbox', [])})
+            print(f"Enviado a la cola de guardado: {out_path}")
+        else: # Fallback a guardado síncrono
+            cv2.imwrite(out_path, out_bgr)
+            print(f"Resultado guardado en: {out_path}")
+
     return out_path
 
 def main():
