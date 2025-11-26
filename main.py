@@ -155,13 +155,13 @@ def main():
                             out_video_path=None, 
                             display=True, 
                             iou_thresh=0.30, 
-                            min_area=800,    
-                            max_missed=10,   
-                            confirm_frames=1, 
+                            min_area=400, # permite  detectar placas más pequeñas aumentar para filtrar placas más grandes
+                            max_missed=15,   # AUMENTAR PARA MEJOR RETENCIÓN
+                            confirm_frames=3, # AUMENTAR PARA MÁS ESTABILIDAD
                             aspect_ratio_min=1.8, 
                             aspect_ratio_max=8.0, 
                             dampening_factor=0.75,
-                            ocr_padding_ratio=0.1
+                            ocr_padding_ratio=0.15
                         )
                     except Exception as e:
                         print("Error procesando", vid, e)
