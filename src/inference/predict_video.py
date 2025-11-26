@@ -697,58 +697,31 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
             if len(tr['detection_history']) > 30:
                 tr['detection_history'] = tr['detection_history'][-30:]
 
+            # --- LÓGICA DE GUARDADO (REFORZADA Y CENTRALIZADA) ---
+            # Requisitos:
+            # 1. Track confirmado.
+            # 2. Confianza de la detección actual >= 90%.
+            # 3. OCR exitoso (texto disponible y sin errores).
             should_save = False
-            
-            # 1. Lógica de Confirmación (mismo criterio)
-            if not tr.get('confirmed', False):
-                if tr.get('seen', 0) >= confirm_frames and tr.get('best_score', 0) >= 0.35:
-                    tr['confirmed'] = True
-                    # Forzar un primer intento de OCR/guardado al confirmar
-                    should_save = True 
-            
-            # 2. Re-OCR y Re-Guardado (Solo si está confirmado)
-            if tr.get('confirmed', False) and is_new_best:
-                # 2a. Guardar si el SCORE es mucho mejor que el guardado previamente
-                score_improved_significantly = det['score'] > (tr.get('saved_score', 0) + 0.10)
-                
-                # 2b. O si el OCR falló o no se ha intentado
-                ocr_needed = ('ERR' in tr.get('ocr_text', '')) or not tr.get('ocr_text')
-                
-                if score_improved_significantly or ocr_needed:
-                    
-                    # Enviar la mejor imagen hasta ahora a la cola de OCR
-                    if tr['id'] not in ocr_results or ocr_needed:
-                        best_bbox = tr.get('best_bbox', tr['bbox'])
-                        bx1, by1, bx2, by2 = [int(v) for v in best_bbox]
-                        crop = tr['best_frame'][by1:by2, bx1:bx2].copy()
-                        if crop.size > 0:
-                            ocr_q.put({'track_id': tr['id'], 'image': crop})
-
-                    # Actualizar el texto del track si el resultado ya llegó
-                    if tr['id'] in ocr_results:
-                        new_ocr_text = ocr_results[tr['id']]
-                        tr['ocr_text'] = new_ocr_text
-
-                        # ----------------------------------------------------
-                        # Lógica de Guardado DEFINITIVA
-                        # ----------------------------------------------------
-                        
-                        ocr_is_successful = new_ocr_text and "ERR" not in new_ocr_text and "[OCR NO" not in new_ocr_text
-                        
-                        # Guardar si:
-                        # a) Se logró un OCR exitoso (prioridad 1)
-                        # b) O si el score es significativamente mejor y no había OCR antes (prioridad 2)
-                        
-                        if ocr_is_successful:
-                            should_save = True
-                        elif score_improved_significantly and not tr.get('saved_ocr_success', False):
-                            should_save = True
-
-            if should_save:
-                # Asegurarse de que el ocr_text está actualizado antes de guardar
+            if tr.get('confirmed', False):
+                # 1. Asegurarse de que el texto del OCR esté actualizado ANTES de tomar la decisión.
                 if tr['id'] in ocr_results:
                     tr['ocr_text'] = ocr_results[tr['id']]
+                
+                # 2. Evaluar las condiciones con la información más reciente.
+                current_score = det['score']
+                ocr_text = tr.get('ocr_text', '')
+                ocr_is_valid = ocr_text and 'ERR' not in ocr_text and '[OCR' not in ocr_text
 
+                if current_score >= 0.90 and ocr_is_valid:
+                    if current_score > tr.get('saved_score', 0):
+                        should_save = True
+                        # Actualizar la mejor captura con la detección actual
+                        tr['best_frame'] = bgr.copy()
+                        tr['best_bbox'] = det['bbox'].copy()
+                        tr['best_score'] = current_score
+
+            if should_save:
                 best_bbox = tr.get('best_bbox', tr['bbox'])
 
                 img_to_save = tr['best_frame'].copy()
@@ -823,19 +796,9 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
             tnew['current_score'] = det['score']
             tracks.append(tnew); next_track_id += 1
 
-            # Confirmar solo si la detección es suficientemente clara y grande
+            # Confirmar un track nuevo si la detección inicial es de calidad razonable
             if (tnew['best_score'] >= 0.50) or (tnew['best_score'] >= 0.35 and (w*h) >= 800):
                 tnew['confirmed'] = True
-                # Guardamos una imagen inicial para metadata, pero NO sobrescribimos saved_score
-                img_to_save = tnew['best_frame'].copy()
-                img_to_save = draw_labels(img_to_save, tnew['best_bbox'], tnew['id'], tnew['best_score'], tnew['ocr_text'])
-                clean_text = tnew['ocr_text'].replace('[OCR-', '').replace(']', '')
-                suffix = clean_text if clean_text else "placa"
-                saver_q.put({'type': 'image', 'path': os.path.join(UNIQUE_OUTPUT_DIR, f"{ts}_ID{tnew['id']}_{suffix}.jpg"),
-                             'image': img_to_save, 'track_id': tnew['id'], 'score': tnew['best_score'],
-                             'ocr_text': tnew['ocr_text'], 'timestamp': datetime.now().isoformat(),
-                             'video_path': out_video_path, 'bbox': tnew['best_bbox']})
-                # dejar saved_score en 0.0 para forzar un primer guardado más tarde si hay mejora
 
         # NO FILTRAR TRACKS: mantener todos para poder pintarlos
         # El filtrado final (eliminación) sucede al final después de escribir el frame
@@ -882,42 +845,6 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
     ocr_q.put(ocr_stop_token); ocr_thread.join(timeout=15)
     # Esperar a que la cola de OCR se vacíe antes del guardado final
     ocr_q.join()
-    
-    # Guardar la mejor detección de cada track desde el histórico
-    print("📊 Procesando histórico de detecciones para guardar las mejores...")
-    for tr in tracks:
-        if not tr.get('confirmed', False) or tr.get('age', 0) < 2:
-            continue
-    
-        best_frame, best_bbox, best_score, best_ocr = select_best_detection_from_history(tr)
-
-        # Asegurarse de que el texto final del OCR esté actualizado desde el diccionario
-        if tr['id'] in ocr_results:
-            best_ocr = ocr_results[tr['id']]
-    
-        if best_frame is None:
-            continue
-    
-        # Dibujar etiqueta
-        img_to_save = best_frame.copy()
-        img_to_save = draw_labels(img_to_save, best_bbox, tr['id'], best_score, best_ocr)
-    
-        # Nombre del archivo con OCR
-        clean_text = best_ocr.replace('[OCR-', '').replace(']', '').replace('[OCR', '').replace('NO', '').replace('INSTALADO', '')
-        suffix = clean_text.strip() if clean_text and "ERR" not in clean_text else "placa"
-        img_name = f"{ts}_FINAL_ID{tr['id']}_{suffix}.jpg"
-    
-        saver_q.put({
-            'type': 'image',
-            'path': os.path.join(UNIQUE_OUTPUT_DIR, img_name),
-            'image': img_to_save,
-            'track_id': tr['id'],
-            'score': best_score,
-            'ocr_text': best_ocr,
-            'timestamp': datetime.now().isoformat(),
-            'video_path': out_video_path,
-            'bbox': best_bbox
-        })
 
     print(f"✔ Resultados guardados en: {UNIQUE_OUTPUT_DIR}")
     return out_video_path
