@@ -1,10 +1,12 @@
 # Versión Final Definitiva: Lógica de Inferencia Compartida
 import re
 import os
+import sys
 from datetime import datetime
 import csv
 import queue
-import threading
+import subprocess
+import threading, webbrowser
 
 import cv2
 import numpy as np
@@ -32,6 +34,146 @@ except Exception:
 from src.config import MODEL_PATH, IMG_SIZE, ROOT_MODEL_DIR, LATEST_MODEL_PATH, THRESHOLD
 from src.models.efficient_detector_multi_placa import NUM_CLASSES, yolo_ciou_loss
 from src.utils.mpd_utils import nms_numpy
+
+# ---------------------------
+# UTILIDAD DE SISTEMA OPERATIVO
+# ---------------------------
+def get_plate_from_csv(csv_path, image_filename):
+    """Lee el CSV y devuelve la placa para un nombre de archivo de imagen dado."""
+    try:
+        with open(csv_path, 'r', newline='', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                # Compara el nombre de archivo base
+                csv_filename = os.path.basename(row.get('filepath', ''))
+                if csv_filename == image_filename:
+                        return row.get('plate_text', '')
+    except FileNotFoundError:
+        # El archivo puede no existir al principio, es normal.
+        pass
+    except Exception as e:
+        print(f"⚠️ Error leyendo CSV para la galería: {e}")
+    return ''
+
+def create_html_gallery(folder_path):
+    """
+    Crea un archivo index.html en la carpeta de resultados para mostrar una galería
+    de las imágenes y videos generados.
+    """
+    html_path = os.path.join(folder_path, "index.html")
+    
+    csv_path = os.path.join(folder_path, "metadata.csv")
+    # Buscar archivos de imagen y video
+    images = sorted([f for f in os.listdir(folder_path) if f.lower().endswith(('.png', '.jpg', '.jpeg'))])
+    videos = sorted([f for f in os.listdir(folder_path) if f.lower().endswith('.mp4')])
+
+    # Estilo CSS para la galería
+    html_content = """
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Resultados de Inferencia</title>
+        <style>
+            body { font-family: sans-serif; background-color: #f0f2f5; margin: 0; padding: 20px; }
+            h1, h2 { color: #333; text-align: center; }
+            .gallery { display: flex; flex-wrap: wrap; gap: 15px; justify-content: center; }
+            .gallery-item { cursor: pointer; border: 1px solid #ddd; border-radius: 8px; overflow: hidden; background-color: white; box-shadow: 0 2px 5px rgba(0,0,0,0.1); transition: transform 0.2s; }
+            .gallery-item:hover { transform: scale(1.05); box-shadow: 0 4px 10px rgba(0,0,0,0.2); }
+            .gallery-item h4 { margin: 10px 0 5px 0; color: #555; font-size: 14px; }
+            .gallery-item img { width: 300px; height: 200px; object-fit: cover; display: block; }
+            .gallery-item video { max-width: 100%; display: block; }
+            .video-container { width: 100%; max-width: 800px; margin: 20px auto; }
+            /* Estilos del Lightbox */
+            .lightbox { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.85); justify-content: center; align-items: center; }
+            .lightbox-content { max-width: 90%; max-height: 90%; }
+            .lightbox-close { position: absolute; top: 20px; right: 35px; color: #fff; font-size: 40px; font-weight: bold; cursor: pointer; }
+            .lightbox-nav { position: absolute; top: 50%; transform: translateY(-50%); background-color: rgba(0,0,0,0.5); color: white; border: none; font-size: 30px; cursor: pointer; padding: 10px 15px; user-select: none; }
+            .prev { left: 10px; }
+            .next { right: 10px; }
+        </style>
+    </head>
+    <body>
+        <h1>Resultados de Inferencia</h1>
+    """
+
+    # Sección de Imágenes
+    if images:
+        html_content += "<h2>Imágenes Guardadas</h2><div class='gallery' id='image-gallery'>"
+        for i, image in enumerate(images):
+            plate_text = get_plate_from_csv(csv_path, image)
+            title = f"Placa: {plate_text}" if plate_text else "Placa: (No detectada)"
+
+            html_content += f"""
+            <div class="gallery-item" onclick="openLightbox({i})">
+                <img src="{image}" alt="{image}">
+                <h4>{title}</h4>
+            </div>
+            """
+        html_content += "</div>"
+
+    # Contenedor del Lightbox
+    html_content += """
+        <div id="lightbox" class="lightbox">
+            <span class="lightbox-close" onclick="closeLightbox()">&times;</span>
+            <img class="lightbox-content" id="lightbox-img">
+            <button class="lightbox-nav prev" onclick="changeImage(-1)">&#10094;</button>
+            <button class="lightbox-nav next" onclick="changeImage(1)">&#10095;</button>
+        </div>
+    """
+
+    # Script de JavaScript para el Lightbox
+    html_content += f"""
+    <script>
+        const images = {str(images)};
+        let currentImageIndex = 0;
+        const lightbox = document.getElementById('lightbox');
+        const lightboxImg = document.getElementById('lightbox-img');
+
+        function openLightbox(index) {{
+            currentImageIndex = index;
+            lightboxImg.src = images[currentImageIndex];
+            lightbox.style.display = 'flex';
+        }}
+        function closeLightbox() {{
+            lightbox.style.display = 'none';
+        }}
+        function changeImage(step) {{
+            currentImageIndex = (currentImageIndex + step + images.length) % images.length;
+            lightboxImg.src = images[currentImageIndex];
+        }}
+        document.addEventListener('keydown', function(e) {{
+            if (lightbox.style.display === 'flex') {{
+                if (e.key === 'Escape') closeLightbox();
+                if (e.key === 'ArrowLeft') changeImage(-1);
+                if (e.key === 'ArrowRight') changeImage(1);
+            }}
+        }});
+    </script>
+    </body></html>
+    """
+
+    try:
+        with open(html_path, 'w', encoding='utf-8') as f:
+            f.write(html_content)
+        return html_path
+    except Exception as e:
+        print(f"⚠️ No se pudo crear la galería HTML: {e}")
+        return None
+
+def open_folder(folder_path):
+    """
+    Crea una galería HTML y muestra la ruta en la consola sin abrirla.
+    """
+    gallery_path = create_html_gallery(folder_path)
+    
+    # Ya no se intenta abrir la carpeta/archivo automáticamente.
+    # Solo se imprime la ruta para que el usuario la abra manualmente.
+    if gallery_path:
+        print(f"✔ Galería HTML creada en: {os.path.realpath(gallery_path)}")
+    
+    print(f"📂 Puedes encontrar todos los resultados en: {os.path.realpath(folder_path)}")
 
 # ---------------------------
 # UTILIDAD DE DIBUJADO
@@ -156,6 +298,33 @@ def run_ocr(cropped_img):
         if len(results) > 0:
             raw_plate = results[0][1]
             plate_text = re.sub(r'\s+', '', raw_plate).replace("-", "").upper()
+
+            # --- NUEVO: LIMPIEZA POR LONGITUD (para eliminar bordes) ---
+            # Caso 1: Se detectan 7 caracteres (un borde)
+            if len(plate_text) == 7:
+                # Generar dos candidatos: quitando el primero y quitando el último
+                candidate1 = plate_text[1:]  # Ej: "1ABC123" -> "ABC123"
+                candidate2 = plate_text[:-1] # Ej: "ABC1237" -> "ABC123"
+
+                # Función para puntuar qué tan "buena" es una placa (3 letras, 3 números)
+                def score_plate(p):
+                    if len(p) != 6: return 0
+                    score = 0
+                    for i in range(3):
+                        if 'A' <= p[i] <= 'Z': score += 1
+                    for i in range(3, 6):
+                        if '0' <= p[i] <= '9': score += 1
+                    return score
+
+                # Elegir el mejor candidato
+                if score_plate(candidate1) > score_plate(candidate2):
+                    plate_text = candidate1
+                else:
+                    plate_text = candidate2
+            # Caso 2: Se detectan 8 caracteres (ambos bordes)
+            elif len(plate_text) == 8:
+                plate_text = plate_text[1:-1] # Ej: "1ABC1237" -> "ABC123"
+
             if len(plate_text) == 6:
                 corrected_plate = ""
                 for i in range(3):
@@ -256,8 +425,10 @@ def start_saver_thread(q, csv_path):
             try:
                 with open(csv_path, 'r', newline='') as cf:
                     for rec in csv.DictReader(cf):
-                        if rec.get('track_id'): rows[rec['track_id']] = rec
+                        # Usar el filepath como clave única para evitar sobrescrituras
+                        if rec.get('filepath'): rows[rec['filepath']] = rec
             except Exception: pass
+            
         fieldnames = ['track_id', 'filepath', 'score', 'plate_text', 'city_text', 'timestamp', 'video_path', 'bbox_x1', 'bbox_y1', 'bbox_x2', 'bbox_y2']
         def write_csv():
             try:
@@ -277,7 +448,8 @@ def start_saver_thread(q, csv_path):
                         tid = str(job.get('track_id', ''))
                         bbox = job.get('bbox', [0,0,0,0])
                         ocr_data = job.get('ocr_text', {'plate': '', 'city': ''})
-                        rows[tid] = {
+                        # Usar el path como clave única en el diccionario
+                        rows[path] = {
                             'track_id': tid, 'filepath': path, 'score': f"{job.get('score', 0):.4f}",
                             'plate_text': ocr_data.get('plate', ''), 'city_text': ocr_data.get('city', ''),
                             'timestamp': job.get('timestamp', ''), 'video_path': job.get('video_path', ''),

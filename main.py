@@ -14,7 +14,7 @@ from time import sleep
 # inferencia
 from src.inference.predict_image import infer_image
 # La lógica de carga de modelo ahora está en utils
-from src.inference.inference_utils import load_model_safe
+from src.inference.inference_utils import load_model_safe, open_folder, start_saver_thread, start_ocr_thread
 # Los scripts de inferencia ahora cargan su propio modelo, pero mantenemos la importación para referencia
 from src.inference.predict_video import process_video
 from src.inference.predict_webcam import run_webcam, list_cameras
@@ -22,6 +22,7 @@ from src.config import INPUT_FEED_DIR, OUTPUT_FEED_DIR
 import glob
 import os
 from datetime import datetime
+import queue
 
 
 def clean_screen():
@@ -131,10 +132,25 @@ def main():
                 print(f"Las imágenes procesadas se guardarán en: {unique_output_dir}")
                 sleep(2)
 
+                # Iniciar hilos de guardado y OCR para el lote de imágenes
+                saver_q = queue.Queue()
+                ocr_q = queue.Queue()
+                ocr_results = {}
+                saver_thread, stop_token = start_saver_thread(saver_q, os.path.join(unique_output_dir, 'metadata.csv'))
+                ocr_thread, ocr_stop_token = start_ocr_thread(ocr_q, ocr_results)
+
                 for f in files:
-                    # Ya no se pasa out_path, para que infer_image use su propia lógica de guardado
                     print(f"\n--- Procesando imagen: {os.path.basename(f)} ---")
-                    infer_image(model, f, out_dir=unique_output_dir)
+                    # Pasar las colas y el diccionario de resultados a la función
+                    infer_image(model, f, out_dir=unique_output_dir, saver_q=saver_q, ocr_q=ocr_q, ocr_results=ocr_results)
+                
+                # Detener hilos y esperar a que terminen
+                saver_q.put(stop_token); saver_thread.join(timeout=15); saver_q.join()
+                ocr_q.put(ocr_stop_token); ocr_thread.join(timeout=15); ocr_q.join()
+                
+                # Abrir la galería de resultados al finalizar el lote
+                open_folder(unique_output_dir)
+            input("Presione Enter para continuar...")
             return main()
 
         # ------------------ VIDEO -------------------
@@ -155,10 +171,12 @@ def main():
             else:
                 print(f"Se encontraron {len(video_files)} videos. Comenzando procesamiento...")
                 sleep(2)
+                last_output_dir = None
                 for video_path in video_files:
                     try:
                         print(f"\n--- Procesando: {os.path.basename(video_path)} ---")
-                        process_video(
+                        # La función ahora devuelve la ruta de la carpeta de salida
+                        last_output_dir = process_video(
                             model=model,
                             video_path=video_path, # Pasar la ruta del video actual
                             display=True
@@ -166,6 +184,10 @@ def main():
                     except Exception as e:
                         print(f"Error al procesar el video {video_path}: {e}")
                         sleep(2)
+                
+                # Abrir la galería de la última ejecución al finalizar el lote
+                if last_output_dir:
+                    open_folder(last_output_dir)
                         
             input("Enter para continuar...")
             return main()

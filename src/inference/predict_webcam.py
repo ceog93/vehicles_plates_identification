@@ -16,7 +16,7 @@ from tqdm import tqdm
 # Importar lógica compartida
 from src.inference.inference_utils import (
     load_model_safe, process_predictions, match_detections_to_tracks,
-    start_saver_thread, start_ocr_thread, draw_bbox_safe, draw_labels, _center
+    start_saver_thread, start_ocr_thread, draw_bbox_safe, draw_labels, _center, open_folder
 )
 from src.utils.mpd_utils import resize_pad
 from src.config import IMG_SIZE, OUTPUT_FEED_DIR, THRESHOLD
@@ -205,8 +205,12 @@ def run_webcam(cam_index=0, model=None, img_size=IMG_SIZE[0], display=True,
     pbar.close()
     if display: cv2.destroyAllWindows()
     saver_q.put(stop_token); saver_thread.join(timeout=5)
+    saver_q.join() # Esperar a que la cola de guardado se vacíe
     ocr_q.put(ocr_stop_token); ocr_thread.join(timeout=5)
     print(f"✔ Proceso de webcam finalizado. Resultados en: {UNIQUE_OUTPUT_DIR}")
+
+    # Abrir la carpeta de resultados
+    open_folder(UNIQUE_OUTPUT_DIR)
 
 def main():
     parser = argparse.ArgumentParser(description="Inferencia en webcam con tracking avanzado.")

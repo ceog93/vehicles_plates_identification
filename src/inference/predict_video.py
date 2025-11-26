@@ -30,7 +30,7 @@ from src.config import MODEL_PATH, IMG_SIZE, OUTPUT_FEED_DIR, THRESHOLD
 from src.utils.mpd_utils import resize_pad
 from src.inference.inference_utils import (
     load_model_safe, process_predictions, match_detections_to_tracks,
-    start_saver_thread, start_ocr_thread, draw_bbox_safe, draw_labels, _center
+    start_saver_thread, start_ocr_thread, draw_bbox_safe, draw_labels, _center, open_folder
 )
 
 # ---------------------------
@@ -233,7 +233,7 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
                 plate_text = ocr_dict.get('plate', '')
                 suffix = plate_text if plate_text and "ERR" not in plate_text else "placa"
                 img_ts = datetime.now().strftime('%Y-%m-%d_%H-%M-%S') # Timestamp en tiempo real para la imagen
-                img_name = f"{img_ts}_ID_{tr['id']}_{suffix}.jpg"
+                img_name = f"{img_ts}_{tr['id']}_{suffix}.jpg"
 
                 tr['saved_score'] = tr['best_score']
                 saver_q.put({'type': 'image', 'path': os.path.join(UNIQUE_OUTPUT_DIR, img_name), 'image': img_to_save,
@@ -334,12 +334,13 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
     cap.release(); writer.release(); pbar.close()
     if display: cv2.destroyAllWindows()
     saver_q.put(stop_token); saver_thread.join(timeout=15)
+    saver_q.join() # Esperar a que la cola de guardado se vacíe
     ocr_q.put(ocr_stop_token); ocr_thread.join(timeout=15)
     # Esperar a que la cola de OCR se vacíe antes del guardado final
     ocr_q.join()
 
     print(f"✔ Resultados guardados en: {UNIQUE_OUTPUT_DIR}")
-    return out_video_path
+    return UNIQUE_OUTPUT_DIR
 
 def main():
     parser = argparse.ArgumentParser(description="Inferir video con etiquetas completas (ID, Confianza, Placa)")
