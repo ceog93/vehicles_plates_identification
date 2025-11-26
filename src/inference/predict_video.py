@@ -521,7 +521,7 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    ts = datetime.now().strftime('%Y%m%d%H%M%S')
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
     base = os.path.basename(video_path)
     UNIQUE_OUTPUT_DIR = os.path.join(OUTPUT_FEED_DIR, ts)
     os.makedirs(UNIQUE_OUTPUT_DIR, exist_ok=True)
@@ -737,7 +737,8 @@ def process_video(model, video_path, out_video_path=None, img_size=IMG_SIZE[0], 
                 ocr_dict = tr.get('ocr_text', {}) if isinstance(tr.get('ocr_text'), dict) else {}
                 plate_text = ocr_dict.get('plate', '')
                 suffix = plate_text if plate_text and "ERR" not in plate_text else "placa"
-                img_name = f"{ts}_ID{tr['id']}_{suffix}.jpg"
+                img_ts = datetime.now().strftime('%Y%m%d_%H%M%S') # Timestamp en tiempo real para la imagen
+                img_name = f"{img_ts}_ID{tr['id']}_{suffix}.jpg"
 
                 tr['saved_score'] = tr['best_score']
                 saver_q.put({'type': 'image', 'path': os.path.join(UNIQUE_OUTPUT_DIR, img_name), 'image': img_to_save,
