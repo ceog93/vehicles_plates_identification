@@ -13,13 +13,15 @@ from time import sleep
 
 # inferencia
 from src.inference.predict_image import infer_image
-from src.inference.predict_video import process_video, load_model_safe
-
-from src.inference.predict_webcam import run_webcam
-
+# La lógica de carga de modelo ahora está en utils
+from src.inference.inference_utils import load_model_safe
+# Los scripts de inferencia ahora cargan su propio modelo, pero mantenemos la importación para referencia
+from src.inference.predict_video import process_video
+from src.inference.predict_webcam import run_webcam, list_cameras
 from src.config import INPUT_FEED_DIR, OUTPUT_FEED_DIR
 import glob
 import os
+from datetime import datetime
 
 
 def clean_screen():
@@ -104,7 +106,7 @@ def main():
         try:
             print(f"Cargando modelo automáticamente desde: {LATEST_MODEL_PATH}")
             sleep(2)
-            model = load_model_safe(LATEST_MODEL_PATH)
+            model = load_model_safe() # Ya no necesita path, lo busca automáticamente
         except Exception as e:
             print("No se pudo cargar el modelo:", e)
             input("Presione Enter para continuar...")
@@ -115,8 +117,6 @@ def main():
             print("Seleccion de modo: Imagen")
             sleep(2)
             in_dir = INPUT_FEED_DIR
-            out_dir = OUTPUT_FEED_DIR
-            os.makedirs(out_dir, exist_ok=True)
 
             exts = ('.jpg', '.jpeg', '.png', '.bmp')
             files = sorted([f for f in glob.glob(in_dir + "/*") if f.lower().endswith(exts)])
@@ -124,10 +124,17 @@ def main():
             if not files:
                 print("No hay imágenes en INPUT_FEED_DIR")
             else:
+                # Crear una única carpeta de salida para todo el lote de imágenes
+                ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+                unique_output_dir = os.path.join(OUTPUT_FEED_DIR, ts)
+                os.makedirs(unique_output_dir, exist_ok=True)
+                print(f"Las imágenes procesadas se guardarán en: {unique_output_dir}")
+                sleep(2)
+
                 for f in files:
-                    out_f = os.path.join(out_dir, "det_" + os.path.basename(f))
-                    infer_image(model, f, out_path=out_f)
-                    print(f"Imagen procesada: {f} -> {out_f}")
+                    # Ya no se pasa out_path, para que infer_image use su propia lógica de guardado
+                    print(f"\n--- Procesando imagen: {os.path.basename(f)} ---")
+                    infer_image(model, f, out_dir=unique_output_dir)
             return main()
 
         # ------------------ VIDEO -------------------
@@ -138,33 +145,26 @@ def main():
             out_dir = OUTPUT_FEED_DIR
             os.makedirs(out_dir, exist_ok=True)
 
+            # Buscar todos los videos en el directorio de entrada
             vext = ('.mp4', '.avi', '.mov', '.mkv')
-            files = sorted([f for f in glob.glob(in_dir + "/*") if f.lower().endswith(vext)])
+            video_files = sorted([f for f in glob.glob(in_dir + "/*") if f.lower().endswith(vext)])
 
-            if not files:
-                print("No hay videos en INPUT_FEED_DIR")
-                input("Enter para continuar...")
-                return main()
+            if not video_files:
+                print(f"No se encontraron videos en la carpeta: {in_dir}")
+                sleep(2)
             else:
-                for vid in files:
-                    print(f"Procesando video (OCR colombiano multiplaca): {vid}")                    
+                print(f"Se encontraron {len(video_files)} videos. Comenzando procesamiento...")
+                sleep(2)
+                for video_path in video_files:
                     try:
+                        print(f"\n--- Procesando: {os.path.basename(video_path)} ---")
                         process_video(
-                            model=model,                            
-                            video_path=vid, 
-                            out_video_path=None, 
-                            display=True, 
-                            iou_thresh=0.30, 
-                            min_area=400, # permite  detectar placas más pequeñas aumentar para filtrar placas más grandes
-                            max_missed=15,   # AUMENTAR PARA MEJOR RETENCIÓN
-                            confirm_frames=3, # AUMENTAR PARA MÁS ESTABILIDAD
-                            aspect_ratio_min=1.8, 
-                            aspect_ratio_max=8.0, 
-                            dampening_factor=0.75,
-                            ocr_padding_ratio=0.15
+                            model=model,
+                            video_path=video_path, # Pasar la ruta del video actual
+                            display=True
                         )
                     except Exception as e:
-                        print("Error procesando", vid, e)
+                        print(f"Error al procesar el video {video_path}: {e}")
                         sleep(2)
                         
             input("Enter para continuar...")
@@ -174,7 +174,6 @@ def main():
         elif mode == "3":
             print("Seleccion de modo: Webcam")
             input("Presione Enter para continuar...")
-            from src.inference.predict_webcam import list_cameras
             cams = list_cameras()
 
             if not cams:
@@ -189,7 +188,8 @@ def main():
             sel = input(f"Seleccione cámara (enter={cams[0]}): ")
             cam = int(sel) if sel.strip() else cams[0]
 
-            run_webcam(model, cam_index=cam)
+            # El script de webcam ahora carga su propio modelo
+            run_webcam(cam_index=cam)
 
             input("Enter para continuar...")
             return main()
