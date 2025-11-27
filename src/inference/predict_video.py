@@ -27,7 +27,7 @@ except ImportError:
 
 # Importaciones del proyecto
 from src.config import MODEL_PATH, IMG_SIZE, OUTPUT_FEED_DIR, THRESHOLD
-from src.utils.mpd_utils import resize_pad
+from src.utils.image_bbox_utils import resize_pad
 from src.inference.inference_utils import (
     load_model_safe, process_predictions, match_detections_to_tracks,
     start_saver_thread, start_ocr_thread, draw_bbox_safe, draw_labels, _center, open_folder

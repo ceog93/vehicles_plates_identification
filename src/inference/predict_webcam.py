@@ -18,7 +18,7 @@ from src.inference.inference_utils import (
     load_model_safe, process_predictions, match_detections_to_tracks,
     start_saver_thread, start_ocr_thread, draw_bbox_safe, draw_labels, _center, open_folder
 )
-from src.utils.mpd_utils import resize_pad
+from src.utils.image_bbox_utils import resize_pad
 from src.config import IMG_SIZE, OUTPUT_FEED_DIR, THRESHOLD
 
 def list_cameras(max_index: int = 8, warmup_frames: int = 2):

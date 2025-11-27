@@ -18,7 +18,7 @@ Notas de diseño:
     disponibles y provocan errores de compilación. Para depuración mantenemos
     impresiones condicionadas a `tf.executing_eagerly()`.
 - Las dimensiones de la salida están sincronizadas con el generador de datos
-    `ImageSequence` en `src/utils/image_seguence.py` importando las mismas
+    `ImageBatchLoader` en `src/utils/batch_data_loader.py` importando las mismas
     constantes (GRID_SIZE, NUM_ANCHORS, etc.) cuando sea necesario.
 
 Todo el texto de los docstrings y comentarios está en español para facilitar
@@ -33,40 +33,40 @@ import numpy as np
 from src.config import IMG_SIZE, LEARNING_RATE
 
 
-def tf_maybe_print(*args, **kwargs):
-        """Imprime con `tf.print` solo cuando TensorFlow está en modo eager.
+def imprimir_si_tf_eager(*args, **kwargs):
+    """Imprime con `tf.print` solo cuando TensorFlow está en modo eager.
 
-        Razón: `tf.print` crea ops relacionadas con strings cuando se inserta en el
-        grafo. Si el grafo se compila con XLA (GPU), dichas ops pueden no estar
-        soportadas y provocan errores de compilación (StringFormat). Con este
-        helper mantenemos la información de depuración disponible en ejecuciones
-        interactivas sin afectar a la ejecución/compilación en GPU.
-        """
-        if tf.executing_eagerly():
-                tf.print(*args, **kwargs)
+    Razón: `tf.print` crea ops relacionadas con strings cuando se inserta en el
+    grafo. Si el grafo se compila con XLA (GPU), dichas ops pueden no estar
+    soportadas y provocan errores de compilación (StringFormat). Con este
+    helper mantenemos la información de depuración disponible en ejecuciones
+    interactivas sin afectar a la ejecución/compilación en GPU.
+    """
+    if tf.executing_eagerly():
+        tf.print(*args, **kwargs)
 
 # ===============================
 # CONFIGURACIÓN MULTI-PLACA REAL
 # ===============================
 # ======= Parámetros de salida y anchoring =======
 # `GRID_SIZE` define la resolución de la cuadrícula final (p. ej. 13 en YOLO)
-GRID_SIZE = 13
+TAM_GRID = 13
 # Número de anclas por celda. En este proyecto usamos 3 anclas.
-NUM_ANCHORS = 3
+NUM_ANCLAS = 3
 # Número de clases a predecir. Aquí se entrena para detectar la presencia de una placa.
-NUM_CLASSES = 1
+NUM_CLASES = 1
 # Dimensión por bbox: [conf, cx, cy, w, h] = 5
-BBOX_DIM = 5
+DIM_CAJA = 5
 
-# OUTPUT_DIM es el número de canales de la capa de salida del detector:
-# anchors * (bbox_dim + num_classes). Para los valores actuales: 3 * (5 + 1) = 18
-OUTPUT_DIM = NUM_ANCHORS * (BBOX_DIM + NUM_CLASSES)  # 18
+# DIM_SALIDA es el número de canales de la capa de salida del detector:
+# anclas * (dim_caja + num_clases). Para los valores actuales: 3 * (5 + 1) = 18
+DIM_SALIDA = NUM_ANCLAS * (DIM_CAJA + NUM_CLASES)  # 18
 
 
 # ==================================================
 #                     CIOU
 # ==================================================
-def bbox_ciou(b1, b2):
+def ciou_caja(b1, b2):
     # Convertir desde formato (cx, cy, w, h) a (x1, y1, x2, y2)
     b1_x1 = b1[..., 0] - b1[..., 2] / 2
     b1_y1 = b1[..., 1] - b1[..., 3] / 2
@@ -118,7 +118,7 @@ def bbox_ciou(b1, b2):
 # ==================================================
 #                   LOSS COMPLETA
 # ==================================================
-def yolo_ciou_loss(y_true, y_pred):
+def perdida_ciou(y_true, y_pred):
 
     # Usar shapes dinámicas en tiempo de ejecución para evitar errores
     batch = tf.shape(y_pred)[0]
@@ -126,7 +126,7 @@ def yolo_ciou_loss(y_true, y_pred):
     grid_w = tf.shape(y_pred)[2]
     channels = tf.shape(y_pred)[3]
 
-    per_anchor = BBOX_DIM + NUM_CLASSES
+    per_anchor = DIM_CAJA + NUM_CLASES
 
     # Comprobar que el número de canales es divisible por lo esperado (por ancla)
     mod = tf.math.floormod(channels, per_anchor)
@@ -136,7 +136,7 @@ def yolo_ciou_loss(y_true, y_pred):
     ]):
         num_anchors_tensor = tf.math.floordiv(channels, per_anchor)
     # Imprimir shapes solo en modo eager (no crea ops en grafos compilados)
-    tf_maybe_print("[yolo_loss] shapes -> batch:", batch, "grid:", grid_h, grid_w,
+    imprimir_si_tf_eager("[perdida_ciou] shapes -> batch:", batch, "grid:", grid_h, grid_w,
                    "channels:", channels, "anchors:", num_anchors_tensor)
 
     pred = tf.reshape(
@@ -157,7 +157,7 @@ def yolo_ciou_loss(y_true, y_pred):
     true_cls  = true[..., 5:6]
 
     # IoU para asignación
-    ious = bbox_ciou(pred_bbox, true_bbox)
+    ious = ciou_caja(pred_bbox, true_bbox)
     best_anchor = tf.argmax(ious, axis=-1)  # (B,13,13)
 
     # máscara objeto
@@ -170,7 +170,7 @@ def yolo_ciou_loss(y_true, y_pred):
     best_mask = tf.cast(best_mask, tf.float32)
 
     # --------------- 1) LOSS LOCALIZACIÓN ----------------
-    ciou = bbox_ciou(pred_bbox, true_bbox)
+    ciou = ciou_caja(pred_bbox, true_bbox)
     ciou_term = best_mask * (1 - ciou)  # [B,13,13,3]
 
     loc_loss = obj_mask * tf.reduce_sum(ciou_term, axis=-1, keepdims=True)
@@ -193,74 +193,73 @@ def yolo_ciou_loss(y_true, y_pred):
 # ==================================================
 #                  MODELO COMPLETO
 # ==================================================
-def build_multishot_detector_from_scratch(img_size=IMG_SIZE, learning_rate=LEARNING_RATE):
+def construir_detector_multiplaca_desde_cero(img_size=IMG_SIZE, learning_rate=LEARNING_RATE):
+    """Construye y devuelve el modelo de detección.
 
-        """Construye y devuelve el modelo de detección.
+    Flujo del modelo:
+    - `inputs` acepta imágenes con la forma `img_size` definida en `src.config`.
+    - Normalizamos los píxeles con `Rescaling(1./255)`.
+    - Usamos `EfficientNetB0` como *backbone* sin la cabeza de clasificación
+      (`include_top=False`) y sin pesos pre-entrenados en este proyecto
+      (weights=None). Esto facilita entrenar desde cero con tu dataset.
+    - Reducimos la salida del backbone a la resolución de la cuadrícula final
+      usando `Resizing(TAM_GRID, TAM_GRID)` para obtener un mapa espacial
+      compatible con el formato de salida del detector.
+    - Añadimos un par de capas convolucionales y BatchNorm para procesar
+      características antes de la capa final de predicción.
+    - La capa final es una `Conv2D` con `DIM_SALIDA` filtros, activación
+      `sigmoid` y sin reshape explícito: la salida tiene forma
+      `(batch, TAM_GRID, TAM_GRID, DIM_SALIDA)`.
 
-        Flujo del modelo:
-        - `inputs` acepta imágenes con la forma `img_size` definida en `src.config`.
-        - Normalizamos los píxeles con `Rescaling(1./255)`.
-        - Usamos `EfficientNetB0` como *backbone* sin la cabeza de clasificación
-            (`include_top=False`) y sin pesos pre-entrenados en este proyecto
-            (weights=None). Esto facilita entrenar desde cero con tu dataset.
-        - Reducimos la salida del backbone a la resolución de la cuadrícula final
-            usando `Resizing(GRID_SIZE, GRID_SIZE)` para obtener un mapa espacial
-            compatible con el formato YOLO-like.
-        - Añadimos un par de capas convolucionales y BatchNorm para procesar
-            características antes de la capa final de predicción.
-        - La capa final es una `Conv2D` con `OUTPUT_DIM` filtros, activación
-            `sigmoid` y sin reshape explícito: la salida tiene forma
-            `(batch, GRID_SIZE, GRID_SIZE, OUTPUT_DIM)`.
+    La función compila el modelo con Adam y la función de pérdida `perdida_ciou`.
+    Puedes ajustar `learning_rate` pasando un valor distinto al llamar a esta
+    función.
 
-        La función compila el modelo con Adam y la función de pérdida `yolo_ciou_loss`.
-        Puedes ajustar `learning_rate` pasando un valor distinto al llamar a esta
-        función.
+    Retorna:
+        model (tf.keras.Model): modelo compilado listo para entrenar.
+    """
 
-        Retorna:
-                model (tf.keras.Model): modelo compilado listo para entrenar.
-        """
+    # Entrada: tamaño de imagen definido por la configuración
+    inputs = layers.Input(shape=(img_size[0], img_size[1], 3))
+    # Normalización simple de píxeles (0..1)
+    x = layers.Rescaling(1./255)(inputs)
 
-        # Entrada: tamaño de imagen definido por la configuración
-        inputs = layers.Input(shape=(img_size[0], img_size[1], 3))
-        # Normalización simple de píxeles (0..1)
-        x = layers.Rescaling(1./255)(inputs)
+    # Backbone EfficientNetB0 sin cabeza; `input_tensor=x` enlaza la normalización
+    base = EfficientNetB0(include_top=False, weights=None, input_tensor=x)
+    base.trainable = True
 
-        # Backbone EfficientNetB0 sin cabeza; `input_tensor=x` enlaza la normalización
-        base = EfficientNetB0(include_top=False, weights=None, input_tensor=x)
-        base.trainable = True
+    # Ajustar el mapa de características a la resolución de la cuadrícula
+    x = layers.Resizing(TAM_GRID, TAM_GRID)(base.output)
 
-        # Ajustar el mapa de características a la resolución de la cuadrícula
-        x = layers.Resizing(GRID_SIZE, GRID_SIZE)(base.output)
+    # Capas intermedias para procesar características antes de la salida
+    x = layers.Conv2D(512, 3, padding="same", activation="relu")(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Conv2D(256, 3, padding="same", activation="relu")(x)
+    x = layers.BatchNormalization()(x)
 
-        # Capas intermedias para procesar características antes de la salida
-        x = layers.Conv2D(512, 3, padding="same", activation="relu")(x)
-        x = layers.BatchNormalization()(x)
-        x = layers.Conv2D(256, 3, padding="same", activation="relu")(x)
-        x = layers.BatchNormalization()(x)
+    # Capa final: por cada celda se predice DIM_SALIDA valores
+    outputs = layers.Conv2D(
+        DIM_SALIDA,
+        kernel_size=1,
+        padding="same",
+        activation="sigmoid",
+        name="detection_output"
+    )(x)
 
-        # Capa final: por cada celda se predice OUTPUT_DIM valores
-        outputs = layers.Conv2D(
-                OUTPUT_DIM,
-                kernel_size=1,
-                padding="same",
-                activation="sigmoid",
-                name="detection_output"
-        )(x)
+    model = models.Model(inputs, outputs)
 
-        model = models.Model(inputs, outputs)
+    # Compilamos el modelo con la loss definida más arriba. No aplicamos
+    # métricas aquí (puedes añadir métricas personalizadas si las necesitas).
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate),
+        loss=perdida_ciou,
+    )
 
-        # Compilamos el modelo con la loss definida más arriba. No aplicamos
-        # métricas aquí (puedes añadir métricas personalizadas si las necesitas).
-        model.compile(
-                optimizer=tf.keras.optimizers.Adam(learning_rate),
-                loss=yolo_ciou_loss,
-        )
-
-        return model
+    return model
 
 
 if __name__ == "__main__":
-    m = build_multishot_detector_from_scratch()
+    m = construir_detector_multiplaca_desde_cero()
     x = np.random.rand(1, IMG_SIZE[0], IMG_SIZE[1], 3).astype(np.float32)
     out = m.predict(x)
     print("Salida:", out.shape)

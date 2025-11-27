@@ -14,6 +14,10 @@ def view_web_dataset(img_dir=PROCESED_DATA_DIR, csv_path=PROCESSED_DATA_LABELS_C
     Lanza el visor utilizando las rutas de imagen y CSV especificadas, 
     manejando subcarpetas ('train' y 'validation')
     '''
+    # --- CORRECCIÓN: Deshabilitar paginador de consola ---
+    # Esto evita que la consola se bloquee en un visor de texto (como 'less')
+    fo.config.disable_pagination = True
+
     # --- Cargar CSV ---
     print("\n")
     print("########################################")
@@ -54,7 +58,7 @@ def view_web_dataset(img_dir=PROCESED_DATA_DIR, csv_path=PROCESSED_DATA_LABELS_C
     
     for _, row in tqdm(df.iterrows(), total=len(df), desc="Añadiendo Muestras a FiftyOne"):
         
-        # ⚠️ LÓGICA CLAVE: Construir la ruta completa manejando la subcarpeta ⚠️
+        # LÓGICA CLAVE: Construir la ruta completa manejando la subcarpeta
         split_type = row.get('split')
         folder_name = split_to_folder_map.get(split_type)
         
@@ -102,12 +106,14 @@ def view_web_dataset(img_dir=PROCESED_DATA_DIR, csv_path=PROCESSED_DATA_LABELS_C
         return
 
     print("      4/4. Lanzando visor web FiftyOne...")
-    print(f"\nEl visor web se abrirá automáticamente en tu navegador (http://localhost:{fo.config.default_app_port}).")
+    # Mensaje modificado para WSL: se indica al usuario que abra la URL manualmente.
+    print(f"\nVisor listo. Copie y pegue esta URL en su navegador de Windows: http://localhost:{fo.config.default_app_port}")
     print("\nPresione **Ctrl+C** en la terminal para **cerrar el visor** cuando termine.\n")
     
     # --- Guardar y lanzar visor ---
     dataset.persistent = True
-    session = fo.launch_app(dataset)
+    # Se agrega 'auto=False' para que no intente abrir el navegador, lo cual falla en WSL.
+    session = fo.launch_app(dataset, auto=False)
     session.wait()
     print("\nVisor FiftyOne cerrado.")
     input("Presione Enter para continuar...")

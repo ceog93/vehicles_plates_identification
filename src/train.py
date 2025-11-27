@@ -1,5 +1,5 @@
 # src/train.py
-# Entrenamiento de un detector de placas vehiculares con Transfer Learning (MobileNetV2)
+# Entrenamiento de un detector de placas vehiculares (CNN desde cero)
 # Regresión de Bounding Boxes (dataset Roboflow CSV)
 
 import os
@@ -11,8 +11,8 @@ import matplotlib.pyplot as plt
 #from src.models.efficient_detector import build_efficient_detector as build_detector # Usa EfficientNetB0 como modelo base
 #from src.models.mobile_net_detector import build_mobile_net_detector as build_detector_mobilenet # Alternativa: Usa MobileNetV2 como modelo base
 # from src.utils.preprocess_and_augmentation import preprocess_and_save_data_modular # Se comenta ya que se usa dataset pre-procesado
-from src.models.efficient_detector_multi_placa import build_multishot_detector_from_scratch as build_detector 
-from src.utils.image_seguence import ImageSequence # generador de datos para evitar bloqueo de memoria
+from src.models.efficient_detector_multi_placa import construir_detector_multiplaca_desde_cero as build_detector 
+from src.utils.batch_data_loader import ImageBatchLoader # Batch data generator for memory efficiency
 
 
 # ============================
@@ -81,7 +81,10 @@ def plot_training_history(history):
     plt.legend() # Mostrar leyenda
     plt.grid(True) # Mostrar cuadrícula
     plt.savefig(TRAINING_LOSS_PLOT_PATH) # Guardar la figura en la ruta especificada
-    plt.show() # Mostrar la figura
+    # Se comenta plt.show() para evitar que el script se bloquee en entornos sin GUI (como WSL).
+    # El gráfico ya se ha guardado en un archivo, que es el comportamiento deseado.
+    plt.close()
+    print(f"               ✅ Gráfico de pérdida guardado en {TRAINING_LOSS_PLOT_PATH}")
 
 # ============================
 # FUNCIÓN: ENTRENAR MODELO (Actualizada para usar las variables)
@@ -106,6 +109,9 @@ def train_model(epochs=EPOCHS, batch_size=BATCH_SIZE, img_size=IMG_SIZE,learning
     print(f"             1/7 Iniciando proceso de preprocesamiento, augmentation modular y guardado...")
     df_processed = preprocess_and_save_data_modular() # Puede recibir parámetros si es necesario
     '''
+    print(f"             Epochs: {epochs}\n")
+    print(f"             Batch Size: {batch_size}\n")
+    print(f"             Learning Rate: {learning_rate}\n")
     # --------------------------  LECTURA DE DATOS PROCESADOS --------------------------
     print(f"             1/6 Cargando datos procesados desde CSV existente...")
     
@@ -135,13 +141,13 @@ def train_model(epochs=EPOCHS, batch_size=BATCH_SIZE, img_size=IMG_SIZE,learning
     Funciona como un DataLoader que carga imágenes por lotes desde el disco durante el entrenamiento
     en lugar de cargar todo el dataset en memoria RAM. Esto es crucial para datasets grandes.
     '''
-    train_generator = ImageSequence(df_train, TRAIN_DATA_DIR, batch_size, image_shape=img_size, shuffle=True) # Generador de entrenamiento 
-    validation_generator = ImageSequence(df_val, VALIDATION_DATA_DIR, batch_size, image_shape=img_size, shuffle=False) # Generador de validación
+    train_generator = ImageBatchLoader(df_train, TRAIN_DATA_DIR, batch_size, image_shape=img_size, shuffle=True)
+    validation_generator = ImageBatchLoader(df_val, VALIDATION_DATA_DIR, batch_size, image_shape=img_size, shuffle=False)
     
     # 2. Definir Callbacks
        
     print(f"             3/6 Entrenando y compilando modelo,...\n")
-    model = build_detector(img_size=IMG_SIZE, learning_rate=LEARNING_RATE) # Construir el modelo de detección
+    model = build_detector(img_size=IMG_SIZE, learning_rate=learning_rate) # Construir el modelo de detección
     
     print(f"             4/6 Iniciando proceso de entrenamiento con Callbacks...\n")
     
@@ -172,7 +178,7 @@ def train_model(epochs=EPOCHS, batch_size=BATCH_SIZE, img_size=IMG_SIZE,learning
         #validation_data=(X_val, y_val), # Datos de Validación X_val: Imágenes, y_val: Bounding Boxes
         train_generator,
         validation_data=validation_generator,
-        epochs=EPOCHS, # Número de epochs (Ciclos completos de entrenamiento)
+        epochs=epochs, # Número de epochs (Ciclos completos de entrenamiento)
         # batch_size=BATCH_SIZE, # Tamaño de batch (Número de muestras por actualización de gradiente) # Usado en el generador
         verbose=1, # Mostrar progreso en consola
         callbacks=callbacks, # Llamados para control del entrenamiento

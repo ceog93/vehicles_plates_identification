@@ -1,18 +1,17 @@
-# src/utils/mpd_utils.py
+"""
+src/utils/image_bbox_utils.py
+
+Utilidades para el preprocesamiento de imágenes y el postprocesamiento de cajas delimitadoras.
+Este módulo fue creado para reemplazar el antiguo nombre `mpd_utils.py` (mpd = Multi Plate Detector).
+Proporciona funciones de ayuda utilizadas durante la inferencia: `resize_pad`, `denormalize_box` y `nms_numpy`.
+"""
 import cv2
 import numpy as np
 import tensorflow as tf
 
 def resize_pad(img, size):
     """
-    Se usa en el inferencia para:
-        Mantener aspecto original
-        Evitar deformar la placa
-        Escalar correctamente
-        Recuperar luego coordenadas con scale, top, left
-    Resize manteniendo aspecto y apply padding (letterbox).
-    img: numpy array HxWx3 (RGB)
-    size: int (ej. 416 o 640)
+    Redimensiona la imagen manteniendo la relación de aspecto y aplica relleno (letterbox).
     Retorna: img_padded (size,size,3), scale, top, left
     """
     h, w = img.shape[:2]
@@ -28,11 +27,11 @@ def resize_pad(img, size):
     img_padded = cv2.copyMakeBorder(img_resized, top, bottom, left, right, cv2.BORDER_CONSTANT, value=(114,114,114))
     return img_padded, scale, top, left
 
+
 def denormalize_box(box, img_w, img_h):
     """
-    Se usa después de predecir para convertir las cajas normalizadas 0–1 a coordenadas de píxeles.
-    box: [xmin, ymin, xmax, ymax] normalizados 0..1
-    devuelve coords en píxeles int (x1,y1,x2,y2)
+    Convierte una caja normalizada [xmin,ymin,xmax,ymax] en el rango 0..1 a coordenadas de píxeles.
+    Retorna enteros [x1,y1,x2,y2].
     """
     xmin = int(box[0] * img_w)
     ymin = int(box[1] * img_h)
@@ -40,12 +39,12 @@ def denormalize_box(box, img_w, img_h):
     ymax = int(box[3] * img_h)
     return [xmin, ymin, xmax, ymax]
 
+
 def nms_numpy(boxes, scores, iou_thresh=0.45, score_thresh=0.25):
     """
-    Se usa en la fase de post-procesamiento, después de obtener todas las cajas y scores.
-    NMS simple usando TF backend (pero devuelve indices numpy)
-    boxes: Nx4 en formato [x1,y1,x2,y2] (píxeles o floats)
-    scores: N
+    Wrapper para la supresión de no máximos (NMS) usando el backend de TensorFlow; retorna índices de numpy.
+    boxes: Lista de cajas en formato Nx4 [x1,y1,x2,y2]
+    scores: Lista de puntuaciones de confianza N
     """
     if len(boxes) == 0:
         return np.array([], dtype=int)

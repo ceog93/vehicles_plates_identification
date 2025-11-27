@@ -74,6 +74,13 @@ def main():
     # 1. Preprocesamiento
     # =======================================================
     if option == "1":
+        print("Estás a punto de preprocesar el dataset. Esto REEMPLAZARÁ cualquier dato preprocesado previo.")
+        print("¿Deseas continuar? (s/n)")
+        confirm = input().lower()
+        if confirm != 's':
+            print("Preprocesamiento cancelado.")
+            sleep(2)
+            return main()
         preprocess_and_save_data_modular()
         return main()
 
@@ -88,30 +95,84 @@ def main():
     # 3. Entrenar
     # =======================================================
     elif option == "3":
-        train_model()
+        print("     Iniciando entrenamiento de modelo nuevo...")
+        print("     Esto puede tardar un tiempo dependiendo del hardware.\n")
+        # Establecer numero de epochs, batch size y learning rate aquí si se desea
+        print("     Parámetros por defecto: Epochs=200, Batch Size=8, Learning Rate=0.001")
+        personalizar = input("\n     Desea personalizar los parámetros de entrenamiento? (s/n): ").lower()
+        if personalizar == 's':
+            try:
+                epochs = int(input("\n      Ingrese el número de epochs (por defecto 200): ") or 200)
+                print("\n      Seleccione el tamaño del batch acorde a la memoria de su GPU/CPU.")
+                print("      Tamaños comunes: 4, 8, 16, 32.")
+                print("      Si experimenta errores de memoria, intente con un tamaño menor.")
+                batch_size = int(input("\n      Ingrese el tamaño de batch (por defecto 8): ") or 8)
+                learning_rate = float(input("      Ingrese la tasa de aprendizaje (por defecto 0.001): ") or 0.001)
+                train_model(epochs=epochs, batch_size=batch_size, learning_rate=learning_rate)
+            except ValueError:
+                print("     Entrada inválida. Usando parámetros por defecto.")
+                train_model()
+        else:
+            print("\n     Usando parámetros por defecto.")
+            train_model()
         return main()
 
     # =======================================================
     # 4. INFERENCIA
     # =======================================================
     elif option == "4":
-
+        # cargar modelo automáticamente UNA sola vez
+        try:
+            auto_load = input("\n     Desea cargar el último modelo entrenado automáticamente? (s/n): ").lower()
+            if auto_load == 's':
+                print(f"    Cargando modelo automáticamente desde: {LATEST_MODEL_PATH}")
+                sleep(2)
+                model = load_model_safe() # Ya no necesita path, lo busca automáticamente
+            else:
+                #listar modelos disponibles automaticamente y escoger, que el usuario elija no pedir path
+                print("    Escoja el modelo a usar de la siguiente lista:")
+                root_model_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),"02_models")
+                subdirs = [d for d in os.listdir(root_model_dir)
+                            if os.path.isdir(os.path.join(root_model_dir, d))]
+                if not subdirs:
+                    print("    No se encontraron modelos entrenados.")
+                    input("Presione Enter para continuar...")
+                    return main()
+                print("    Modelos disponibles:")
+                for i, d in enumerate(sorted(subdirs), 1):
+                    print(f"     {i}. {d}")
+                choice = input(f"   Seleccione modelo (1-{len(subdirs)}): ")
+                try:
+                    choice_idx = int(choice) - 1
+                    if choice_idx < 0 or choice_idx >= len(subdirs):
+                        raise ValueError
+                    selected_model_dir = os.path.join(root_model_dir, sorted(subdirs)[choice_idx])
+                    model_path = os.path.join(selected_model_dir, "detector_model.keras")
+                    print(f"    Cargando modelo desde: {model_path}")
+                    sleep(2)
+                    model = load_model_safe(model_path=model_path)
+                except (ValueError, IndexError):
+                    print("    Selección inválida.")
+                    input("    Presione Enter para continuar...")
+                    return main()
+                if not os.path.exists(root_model_dir):
+                    print("    No se encontraron modelos entrenados.")
+                    input("    Presione Enter para continuar...")
+                    return main()
+                
+                
+        except Exception as e:
+            print("    No se pudo cargar el modelo:", e)
+            input("    Presione Enter para continuar...")
+            return main()
+        # =======================================================
         print("Seleccione modo:")
         print(" 1. Imagen")
         print(" 2. Video")
         print(" 3. Webcam")
-
-        mode = input("Elija (1/2/3): ")
-
-        # cargar modelo automáticamente UNA sola vez
-        try:
-            print(f"Cargando modelo automáticamente desde: {LATEST_MODEL_PATH}")
-            sleep(2)
-            model = load_model_safe() # Ya no necesita path, lo busca automáticamente
-        except Exception as e:
-            print("No se pudo cargar el modelo:", e)
-            input("Presione Enter para continuar...")
-            return main()
+        print(" 4. Volver al menú principal\n")
+        mode = input("Elija (1/2/3/4): ")
+        clean_screen()
 
         # ------------------ IMAGEN -------------------
         if mode == "1":
@@ -215,7 +276,9 @@ def main():
 
             input("Enter para continuar...")
             return main()
-
+        # ------------------ VOLVER AL MENÚ -------------------
+        elif mode == "4":
+            return main()
         else:
             print("Opción inválida.")
             return main()

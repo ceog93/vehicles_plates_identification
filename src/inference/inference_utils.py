@@ -32,8 +32,8 @@ except Exception:
 
 # Importaciones del proyecto
 from src.config import MODEL_PATH, IMG_SIZE, ROOT_MODEL_DIR, LATEST_MODEL_PATH, THRESHOLD
-from src.models.efficient_detector_multi_placa import NUM_CLASSES, yolo_ciou_loss
-from src.utils.mpd_utils import nms_numpy
+from src.models.efficient_detector_multi_placa import NUM_CLASES, perdida_ciou
+from src.utils.image_bbox_utils import nms_numpy
 
 # ---------------------------
 # UTILIDAD DE SISTEMA OPERATIVO
@@ -229,7 +229,7 @@ def process_predictions(output_tensor, img_size=IMG_SIZE[0], confidence_threshol
     arr = np.asarray(output_tensor)
     if arr.ndim == 4 and arr.shape[0] == 1: arr = arr[0]
     gh, gw, channels = arr.shape[:3]
-    per_anchor = 5 + NUM_CLASSES
+    per_anchor = 5 + NUM_CLASES
     anchors = int(channels // per_anchor)
     arr = arr.reshape(gh, gw, anchors, per_anchor)
     final_boxes_norm, final_scores = [], []
@@ -279,7 +279,7 @@ def load_model_safe(model_path=None):
     for p in candidates:
         if not p or not os.path.exists(p): continue
         try:
-            model = tf.keras.models.load_model(p, custom_objects={'yolo_ciou_loss': yolo_ciou_loss}, compile=False)
+            model = tf.keras.models.load_model(p, custom_objects={'perdida_ciou': perdida_ciou}, compile=False)
             print(f"✔ Modelo cargado desde: {p}")
             return model
         except Exception as e:

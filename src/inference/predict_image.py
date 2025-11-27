@@ -16,7 +16,7 @@ import numpy as np
 import tensorflow as tf
 
 from src.config import IMG_SIZE, OUTPUT_FEED_DIR
-from src.utils.mpd_utils import resize_pad
+from src.utils.image_bbox_utils import resize_pad
 from src.inference.inference_utils import (
     load_model_safe, process_predictions, run_ocr, draw_labels
 )
